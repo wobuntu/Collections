@@ -59,7 +59,7 @@ public class RTreeNodeTests
   [Fact]
   public void CreateNonLeaf_ZeroForMaxEntries_MinCapacityCapped()
   {
-    var node = RTreeNode<Guid>.CreateNonLeaf(0);
+    var node = RTreeNode<Guid>.CreateNonLeaf(2);
     var capacity = ((List<RTreeNode<Guid>>)node.Children!).Capacity;
     Assert.Equal(RTreeOptions.MinEntriesPerNodeMinimum + 1, capacity);
     Assert.Equal(RTreeOptions.MinEntriesPerNodeMinimum, (int)node.RemainingCapacity);
@@ -76,8 +76,8 @@ public class RTreeNodeTests
   public void IsUnderFull_OnNonLeafLessThanMinChildren_ReturnsTrue()
   {
     // Arrange
-    var nodeEmpty = RTreeNode<string>.CreateNonLeaf(0);
-    var nodeUnderFull = RTreeNode<string>.CreateNonLeaf(0);
+    var nodeEmpty = RTreeNode<string>.CreateNonLeaf(2);
+    var nodeUnderFull = RTreeNode<string>.CreateNonLeaf(2);
 
     for (var index = 1; index < RTreeOptions.MinEntriesPerNodeMinimum; index++)
     {
@@ -95,7 +95,7 @@ public class RTreeNodeTests
   public void IsUnderFull_OnNonLeafExactlyMinChildren_ReturnsFalse()
   {
     // Arrange
-    var nodeUnderFull = RTreeNode<string>.CreateNonLeaf(0);
+    var nodeUnderFull = RTreeNode<string>.CreateNonLeaf(2);
 
     for (var index = 0; index < RTreeOptions.MinEntriesPerNodeMinimum; index++)
     {
@@ -140,9 +140,9 @@ public class RTreeNodeTests
   public void AddChildDirect_UpdatesChildParent()
   {
     // Arrange
-    var parent = RTreeNode<string>.CreateNonLeaf(0);
+    var parent = RTreeNode<string>.CreateNonLeaf(2);
     var childLeaf = RTreeNode<string>.CreateLeaf("Test", new RTreeBoundary());
-    var childNonLeaf = RTreeNode<string>.CreateNonLeaf(0);
+    var childNonLeaf = RTreeNode<string>.CreateNonLeaf(2);
 
     // Act
     parent.AddChildDirect(childLeaf);
@@ -157,12 +157,12 @@ public class RTreeNodeTests
   public void AddChildDirect_OneWithOneWithoutBoundary_UpdatesParentBoundaryCorrectly()
   {
     // Arrange
-    var parent = RTreeNode<string>.CreateNonLeaf(0);
+    var parent = RTreeNode<string>.CreateNonLeaf(2);
 
     var firstChildBoundary = new RTreeBoundary(10, 20, 30, 40);
     var firstChild = RTreeNode<string>.CreateLeaf("Test", firstChildBoundary);
 
-    var secondChild = RTreeNode<string>.CreateNonLeaf(0); // Boundary is here (0,0,0,0)
+    var secondChild = RTreeNode<string>.CreateNonLeaf(2); // Boundary is here (0,0,0,0)
 
     // Act
     parent.AddChildDirect(firstChild);
@@ -178,12 +178,12 @@ public class RTreeNodeTests
   public void AddChildDirect_TwoWithSetBoundary_UpdatesParentBoundaryCorrectly()
   {
     // Arrange
-    var parent = RTreeNode<string>.CreateNonLeaf(0);
+    var parent = RTreeNode<string>.CreateNonLeaf(2);
 
     var firstChildBoundary = new RTreeBoundary(10, 20, 30, 40);
     var firstChild = RTreeNode<string>.CreateLeaf("Test", firstChildBoundary);
 
-    var secondChild = RTreeNode<string>.CreateNonLeaf(0); // Boundary is here (0,0,0,0)
+    var secondChild = RTreeNode<string>.CreateNonLeaf(2); // Boundary is here (0,0,0,0)
 
     var thirdChildBoundary = new RTreeBoundary(25, 10, 30, 40);
     var thirdChild = RTreeNode<string>.CreateLeaf("Test", thirdChildBoundary);
@@ -230,12 +230,12 @@ public class RTreeNodeTests
     // Arrange
     var boundary = new RTreeBoundary(10, 20, 30, 40);
     var leaf = RTreeNode<string>.CreateLeaf("Test", boundary);
-    var oldRoot = RTreeNode<string>.CreateNonLeaf(0);
+    var oldRoot = RTreeNode<string>.CreateNonLeaf(2);
     oldRoot.AddChildDirect(leaf);
 
     // Act
-    var insertedAboveLeaf = leaf.InsertParentLayer(0);
-    var newRoot = oldRoot.InsertParentLayer(0); // Handles case if parent is null.
+    var insertedAboveLeaf = leaf.InsertParentLayer(2);
+    var newRoot = oldRoot.InsertParentLayer(2); // Handles case if parent is null.
 
     // Assert
     Assert.Null(newRoot.Parent);

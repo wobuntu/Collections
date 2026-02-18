@@ -110,7 +110,7 @@ public class RTree<T>
 
       // If the new viewport is contained in the current viewport, then we can just keep the cached
       // data as is. This means the viewport items may contain additional elements, which are currently
-      // outside the viewport, however, this is beneficial for performance during zooming and panning.
+      // outside the viewport, however, this should be beneficial for performance during zooming and panning.
       // The threshold for an actual resize can be influenced by the options passed to the RTree, which
       // also allows to completely disable caching.
       if (_actualViewport.Contains(value))
@@ -357,7 +357,8 @@ public class RTree<T>
       if (closestChild == null)
       {
         Debug.Fail("It should always be possible to select a node for insertion, could only happen if a node without "
-                   + "any children was found, which should be impossible for IsLeaf = false and not being root.");
+                   + "any children was found, which should be impossible for IsLeaf = false (except for Root, which"
+                   + " also should not reach this.");
         return node;
       }
 
