@@ -775,15 +775,4 @@ public class RTreeTests
 
     static RTreeBoundary BoundarySelector(int value) => new(value, value, 10, 10);
   }
-
-  // TODO: Test Viewport + ViewportItems
-  // - Size equals user size, not actual size
-  // - Update (add/remove) updates viewport items accordingly
-  // - All cases of hot paths
-  // TODO: Test RebalanceAncestorNodes
-  // TODO: test against insert nodes with max entries per node = 2, so that a new layer is inserted
-  // TODO: @ InsertNode & ChooseInsertLeaf
-  // TODO: Skip viewport stuff if viewport empty (e.g. RemoveNoLongerIntersectingViewportItems)? Now also running on add, etc.
-  // TODO: All the viewport stuff
-  // TODO: Test against equality of initial distribution vs adding items manually via add, should be similar
 }

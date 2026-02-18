@@ -327,8 +327,6 @@ public class RTree<T>
     // insert a new layer into which the new value can be inserted.
     while (true)
     {
-      // TODO: Check if this is indeed not preferring leafs but also uses containers properly
-
       if (node.IsLeaf)
       {
         return node;
@@ -460,8 +458,6 @@ public class RTree<T>
       var child = toRemove.Children[index];
       InsertNode(child);
     }
-
-    // TODO: This does not work here, as the node has already be removed in this case.
 
     RemoveUnderfullFromAncestorNodes(parent);
     return true;
