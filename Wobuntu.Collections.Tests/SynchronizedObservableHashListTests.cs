@@ -1681,18 +1681,11 @@ public class SynchronizedObservableOrderedSetTests
       setB.ExceptWith(setA);
     });
 
-    var start = DateTimeOffset.UtcNow;
-    while (start.AddSeconds(5) > DateTimeOffset.UtcNow)
-    {
-      if (task1.IsCompleted && task2.IsCompleted)
-      {
-        return;
-      }
+    await Task
+      .WhenAll(task1, task2)
+      .WaitAsync(TimeSpan.FromSeconds(5));
 
-      await Task.Delay(100);
-    }
-
-    Assert.Fail("Cross-set operations deadlocked");
+    // WhenAll re-throws any task exception; TimeoutException fails the test on deadlock
   }
 
   [Fact]
@@ -1714,18 +1707,11 @@ public class SynchronizedObservableOrderedSetTests
       setB.UnionWith(setA);
     });
 
-    var start = DateTimeOffset.UtcNow;
-    while (start.AddSeconds(5) > DateTimeOffset.UtcNow)
-    {
-      if (task1.IsCompleted && task2.IsCompleted)
-      {
-        return;
-      }
+    await Task
+      .WhenAll(task1, task2)
+      .WaitAsync(TimeSpan.FromSeconds(5));
 
-      await Task.Delay(100);
-    }
-
-    Assert.Fail("Cross-set operations deadlocked");
+    // WhenAll re-throws any task exception; TimeoutException fails the test on deadlock
   }
 
   [Fact]

@@ -294,12 +294,12 @@ public class SynchronizedObservableOrderedSet<T>
 
   public int RemoveRange(int startIndex, int count)
   {
-    using var _ = new WriteLockScope(this);
-    if (startIndex < 0 || count < 0 || count > _ordered.Count - startIndex)
-    {
-      throw new ArgumentOutOfRangeException(nameof(startIndex));
-    }
+    ArgumentOutOfRangeException.ThrowIfNegative(startIndex);
+    ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(count, _ordered.Count);
+    ArgumentOutOfRangeException.ThrowIfNegative(count);
+    ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _ordered.Count - startIndex);
 
+    using var _ = new WriteLockScope(this);
     return RemoveItems(startIndex, count);
   }
 
@@ -431,7 +431,7 @@ public class SynchronizedObservableOrderedSet<T>
     }
 
     using var _ = new WriteLockScope(this);
-    Remove((T)value);
+    RemoveItem((T)value);
   }
 
   /// <inheritdoc />
@@ -699,7 +699,7 @@ public class SynchronizedObservableOrderedSet<T>
   protected virtual void ClearItems()
   {
     // Note: Locks are handled by calling public methods.
-    if (Count == 0)
+    if (_ordered.Count == 0)
     {
       return;
     }
