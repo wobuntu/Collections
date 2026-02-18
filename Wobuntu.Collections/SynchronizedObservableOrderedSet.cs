@@ -258,6 +258,12 @@ public class SynchronizedObservableOrderedSet<T>
     }
 
     using var _ = new WriteLockScope(this);
+
+    ArgumentOutOfRangeException.ThrowIfNegative(oldIndex);
+    ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(oldIndex, _ordered.Count);
+    ArgumentOutOfRangeException.ThrowIfNegative(newIndex);
+    ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(newIndex, _ordered.Count);
+
     MoveItem(oldIndex, newIndex);
   }
 
