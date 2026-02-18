@@ -294,12 +294,13 @@ public class SynchronizedObservableOrderedSet<T>
 
   public int RemoveRange(int startIndex, int count)
   {
+    using var _ = new WriteLockScope(this);
+
     ArgumentOutOfRangeException.ThrowIfNegative(startIndex);
-    ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(count, _ordered.Count);
+    ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(startIndex, _ordered.Count);
     ArgumentOutOfRangeException.ThrowIfNegative(count);
     ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _ordered.Count - startIndex);
 
-    using var _ = new WriteLockScope(this);
     return RemoveItems(startIndex, count);
   }
 

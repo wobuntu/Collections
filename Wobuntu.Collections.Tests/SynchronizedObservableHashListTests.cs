@@ -1770,6 +1770,223 @@ public class SynchronizedObservableOrderedSetTests
 
     Assert.Equal(new[] { 1, 2, 3 }, items);
   }
+
+  [Fact]
+  public void RemoveRange_NegativeStartIndex_ThrowsNamingCorrectParam()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>([1, 2, 3]);
+    var exception = Assert.Throws<ArgumentOutOfRangeException>(() => set.RemoveRange(-1, 1));
+    Assert.Equal("startIndex", exception.ParamName);
+  }
+
+  [Fact]
+  public void RemoveRange_NegativeCount_ThrowsNamingCorrectParam()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>([1, 2, 3]);
+    var exception = Assert.Throws<ArgumentOutOfRangeException>(() => set.RemoveRange(0, -1));
+    Assert.Equal("count", exception.ParamName);
+  }
+
+  [Fact]
+  public void AddRange_ToNonEmptySet_RaisesAddEventWithCorrectStartingIndex()
+  {
+    // Arrange
+    var set = new SynchronizedObservableOrderedSet<int>([1, 2]);
+    var events = new List<NotifyCollectionChangedEventArgs>();
+    set.CollectionChanged += (_, args) => events.Add(args);
+
+    // Act
+    set.AddRange([3, 4]);
+
+    // Assert
+    Assert.Single(events);
+    Assert.Equal(NotifyCollectionChangedAction.Add, events[0].Action);
+    Assert.Equal(2, events[0].NewStartingIndex);
+    Assert.Equal(2, events[0].NewItems!.Count);
+  }
+
+  [Fact]
+  public void InsertRange_RaisesAddEventWithCorrectStartingIndex()
+  {
+    // Arrange
+    var set = new SynchronizedObservableOrderedSet<int>([1, 4, 5]);
+    var events = new List<NotifyCollectionChangedEventArgs>();
+    set.CollectionChanged += (_, args) => events.Add(args);
+
+    // Act
+    set.InsertRange(1, [2, 3]);
+
+    // Assert
+    Assert.Single(events);
+    Assert.Equal(NotifyCollectionChangedAction.Add, events[0].Action);
+    Assert.Equal(1, events[0].NewStartingIndex);
+    Assert.Equal(2, events[0].NewItems!.Count);
+  }
+
+  [Fact]
+  public void InsertRange_UpdatesIndicesOfAllAffectedItems()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>([10, 40, 50]);
+    set.InsertRange(1, [20, 30]);
+
+    Assert.Equal(0, set.IndexOf(10));
+    Assert.Equal(1, set.IndexOf(20));
+    Assert.Equal(2, set.IndexOf(30));
+    Assert.Equal(3, set.IndexOf(40));
+    Assert.Equal(4, set.IndexOf(50));
+  }
+
+  [Fact]
+  public void RemoveRange_NonContiguous_UpdatesIndicesOfRemainingItems()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>([10, 20, 30, 40, 50]);
+    set.RemoveRange([20, 40]); // Non-contiguous -> falls back to Reset event
+
+    Assert.Equal(0, set.IndexOf(10));
+    Assert.Equal(1, set.IndexOf(30));
+    Assert.Equal(2, set.IndexOf(50));
+    Assert.Equal(-1, set.IndexOf(20));
+    Assert.Equal(-1, set.IndexOf(40));
+  }
+
+  [Fact]
+  public void RemoveRange_ByIndex_UpdatesIndicesOfRemainingItems()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>([10, 20, 30, 40, 50]);
+    set.RemoveRange(1, 2);
+
+    Assert.Equal(0, set.IndexOf(10));
+    Assert.Equal(1, set.IndexOf(40));
+    Assert.Equal(2, set.IndexOf(50));
+  }
+
+  [Fact]
+  public void Move_InvalidOldIndex_Throws()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>([1, 2, 3]);
+    Assert.Throws<ArgumentOutOfRangeException>(() => set.Move(-1, 0));
+    Assert.Throws<ArgumentOutOfRangeException>(() => set.Move(5, 0));
+  }
+
+  [Fact]
+  public void Move_InvalidNewIndex_Throws()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>([1, 2, 3]);
+    Assert.Throws<ArgumentOutOfRangeException>(() => set.Move(0, -1));
+    Assert.Throws<ArgumentOutOfRangeException>(() => set.Move(0, 5));
+  }
+
+  [Fact]
+  public void CopyTo_ArraySmallerThanCollection_TruncatesWithoutThrowing()
+  {
+    // Note that (as document in code), this deviates from BCL behavior:
+    // Instead of throwing when the target array is too small, it copies as many elements as fit.
+    // The reason for this is, that extension methods like .ToList() don't call the enumerator to populate the list,
+    // but the Count and CopyTo methods separately.
+    // So this behavior is intended to tolerate Count changes after its value had been obtained, because a result
+    // array might already have been allocated with a size, which is different from Count when calling CopyTo on it.
+    var set = new SynchronizedObservableOrderedSet<int>([1, 2, 3, 4, 5]);
+    var array = new int[3];
+
+    // Must not throw even though collection (5) > available space (3)
+    set.CopyTo(array, 0);
+
+    Assert.Equal(1, array[0]);
+    Assert.Equal(2, array[1]);
+    Assert.Equal(3, array[2]);
+  }
+
+  [Fact]
+  public void CopyTo_ArrayLargerThanCollection_LeavesTrailingElementsUntouched()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>([1, 2, 3]);
+    var array = new[] { 99, 99, 99, 99, 99 };
+    set.CopyTo(array, 1);
+
+    Assert.Equal(99, array[0]); // Before offset: untouched
+    Assert.Equal(1, array[1]);
+    Assert.Equal(2, array[2]);
+    Assert.Equal(3, array[3]);
+    Assert.Equal(99, array[4]); // Beyond copied range: untouched
+  }
+
+  [Fact]
+  public void ICollection_CopyTo_WithNonZeroOffset_CopiesToCorrectPosition()
+  {
+    ICollection collection = new SynchronizedObservableOrderedSet<int>([1, 2, 3]);
+    var array = new int[5];
+    collection.CopyTo(array, 2);
+
+    Assert.Equal(0, array[0]);
+    Assert.Equal(0, array[1]);
+    Assert.Equal(1, array[2]);
+    Assert.Equal(2, array[3]);
+    Assert.Equal(3, array[4]);
+  }
+
+  [Fact]
+  public void Constructor_WithCapacity_CreatesEmptySetWithAtLeastRequestedCapacity()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>(100);
+    Assert.Empty(set);
+    Assert.True(set.Capacity >= 100);
+  }
+
+  [Fact]
+  public void EnsureCapacity_ExpandsCapacityToAtLeastRequestedValue()
+  {
+    var set = new SynchronizedObservableOrderedSet<int>();
+    set.EnsureCapacity(100);
+    Assert.True(set.Capacity >= 100);
+  }
+
+  [Fact]
+  public async Task CrossSetOperations_SymmetricExceptWithBothDirections_NoDeadlock()
+  {
+    var setA = new SynchronizedObservableOrderedSet<int>([1, 2, 3, 4, 5]);
+    var setB = new SynchronizedObservableOrderedSet<int>([3, 4, 5, 6, 7]);
+
+    var barrier = new Barrier(2);
+    var task1 = Task.Run(() =>
+    {
+      barrier.SignalAndWait();
+      setA.SymmetricExceptWith(setB);
+    });
+
+    var task2 = Task.Run(() =>
+    {
+      barrier.SignalAndWait();
+      setB.SymmetricExceptWith(setA);
+    });
+
+    await Task
+      .WhenAll(task1, task2)
+      .WaitAsync(TimeSpan.FromSeconds(5));
+  }
+
+  [Fact]
+  public async Task CrossSetOperations_IntersectWithBothDirections_NoDeadlock()
+  {
+    var setA = new SynchronizedObservableOrderedSet<int>([1, 2, 3, 4, 5]);
+    var setB = new SynchronizedObservableOrderedSet<int>([3, 4, 5, 6, 7]);
+
+    var barrier = new Barrier(2);
+    var task1 = Task.Run(() =>
+    {
+      barrier.SignalAndWait();
+      setA.IntersectWith(setB);
+    });
+
+    var task2 = Task.Run(() =>
+    {
+      barrier.SignalAndWait();
+      setB.IntersectWith(setA);
+    });
+
+    await Task
+      .WhenAll(task1, task2)
+      .WaitAsync(TimeSpan.FromSeconds(5));
+  }
 }
 
 #pragma warning restore xUnit2017 // Do not use Contains() to check if a value exists in a collection
