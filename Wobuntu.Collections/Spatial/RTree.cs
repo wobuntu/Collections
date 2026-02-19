@@ -618,6 +618,7 @@ public class RTree<T>
       {
         ResetViewportItems();
       }
+
       return;
     }
 
@@ -656,31 +657,21 @@ public class RTree<T>
     Debug.Assert(_queryStack.Count == 0);
     _queryStack.Push(Root);
 
-    var remaining = _viewportItems.Count; // Just used for asserting all items have been considered.
-
     while (_queryStack.Count > 0)
     {
       var current = _queryStack.Pop();
       if (current.IsLeaf)
       {
-        if (current.ViewportItemsIndex >= 0)
-        {
-          remaining--;
-        }
-
-        current.ViewportItemsIndex = -1;
+        current.IsInViewport = false;
         continue;
       }
 
-      // At this point, the node is a non-leaf.
       if (current.ChildNodesInViewport == 0)
       {
         // No children have been in the viewport yet, hence no need to iterate them again.
         continue;
       }
 
-      // Note that while clearing, we will have an invalid state as we directly set the number of child nodes in
-      // the viewport to 0. Saves a few iterations and should not be harmful.
       current.ChildNodesInViewport = 0;
 
       for (var index = 0; index < current.Children.Count; index++)
@@ -690,12 +681,16 @@ public class RTree<T>
       }
     }
 
-    _viewportItems.Clear(); // Will raise a collection reset event.
-    Debug.Assert(remaining == 0);
+    _viewportItems.Clear();
   }
 
   private void RemoveNoLongerIntersectingViewportItems(RTreeBoundary viewport)
   {
+    Debug.Assert(
+      !viewport.IsEmpty,
+      $"Should not be called if the new viewport is empty, instead {nameof(ResetViewportItems)} " +
+      $"should have been called directly.");
+
     if (_viewport.IsEmpty)
     {
       Debug.Assert(_viewportItems.Count == 0);
@@ -707,17 +702,8 @@ public class RTree<T>
       return;
     }
 
-    if (viewport.IsEmpty)
-    {
-      ResetViewportItems();
-      return;
-    }
-
     Debug.Assert(_queryStack.Count == 0);
     _queryStack.Push(Root);
-
-    var viewportItemsIndex = 0;
-    var removed = 0;
 
     while (_queryStack.Count > 0)
     {
@@ -725,66 +711,39 @@ public class RTree<T>
 
       if (current.IsLeaf)
       {
-        if (current.ViewportItemsIndex == -1)
+        if (!current.IsInViewport || current.Boundary.Intersects(viewport))
         {
-          // Has not been part of the viewport, hence skip without boundary checks.
           continue;
         }
 
-        if (current.Boundary.Intersects(viewport))
-        {
-          if (removed == 0)
-          {
-            // Since no items have yet been removed and the current node is still in the viewport,
-            // no need to update the item's index as well.
-            continue;
-          }
-
-          // Still part of the viewport, but requires index update due to prior removal of items.
-          UpdateViewportItemsIndex(current, ref viewportItemsIndex);
-          continue;
-        }
-
-        // The current item is now no longer part of the viewport.
-        current.ViewportItemsIndex = -1;
-
-        Debug.Assert(Equals(_viewportItems[viewportItemsIndex], current.Data), "Indexing seems broken.");
-        _viewportItems.RemoveAt(viewportItemsIndex);
+        current.IsInViewport = false;
+        _viewportItems.Remove(current.Data);
 
         var parent = current.Parent;
-        Debug.Assert(parent != null);
+        Debug.Assert(parent != null || current == Root, "Orphaned node detected.");
 
         while (parent != null)
         {
+          Debug.Assert(parent.ChildNodesInViewport > 0);
           parent.ChildNodesInViewport--;
+
           // If count == 0: Notify its parent as well that it is no longer part of the viewport.
           parent = parent.ChildNodesInViewport == 0 ? parent.Parent : null;
         }
 
-        viewportItemsIndex--;
-        removed++;
         continue;
       }
 
       if (current.ChildNodesInViewport == 0)
       {
-        // Note that we don't need to do boundary checks here as we did on adding new items to spare iterations;
-        // We already know from the child nodes in viewport field if it can be skipped.
+        // No need to iterate children if none of them are in the viewport.
         continue;
       }
 
-      if (current.ChildNodesInViewport == current.Children.Count
-          && _viewport.Contains(current.Boundary))
+      if (viewport.Contains(current.Boundary))
       {
-        // This non-leaf node was and still is fully contained in the viewport.
-        if (removed == 0)
-        {
-          // No need to reiterate, viewport indices did not change yet.
-          continue;
-        }
-
-        // Still update the viewport indices of children, but skip likely further boundary checks as not needed.
-        UpdateViewportItemsIndex(current, ref viewportItemsIndex);
+        // All items in this subtree are still within the new viewport, nothing to remove.
+        Debug.Assert(current.Children.Count == current.ChildNodesInViewport);
         continue;
       }
 
@@ -794,123 +753,77 @@ public class RTree<T>
         _queryStack.Push(child);
       }
     }
-
-    Debug.Assert(_viewportItems.Count == viewportItemsIndex);
   }
 
   private void AddNewIntersectingViewportItems(RTreeBoundary viewport)
   {
+    Debug.Assert(
+      !viewport.IsEmpty,
+      $"Should not be called if the new viewport is empty, instead {nameof(ResetViewportItems)} " +
+      $"should have been called directly.");
+
     if (viewport.IsEmpty)
     {
+      return;
+    }
+
+    if (_viewport.IsEmpty)
+    {
+      Debug.Assert(_viewportItems.Count == 0);
       return;
     }
 
     Debug.Assert(_queryStack.Count == 0);
     _queryStack.Push(Root);
 
-    var viewportItemsIndex = 0;
-    var added = 0;
-
     while (_queryStack.Count > 0)
     {
       var current = _queryStack.Pop();
-      if (current.ViewportItemsIndex >= 0)
-      {
-        Debug.Assert(
-          current.IsLeaf,
-          $"{nameof(RTreeNode<T>.ViewportItemsIndex)} is expected to only be set for leafs.");
-
-        // Already part of the viewport items, but be sure to update based on previously inserted items:
-        current.ViewportItemsIndex = viewportItemsIndex;
-        Debug.Assert(Equals(_viewportItems[current.ViewportItemsIndex], current.Data));
-
-        viewportItemsIndex++;
-        continue;
-      }
-
-      if (current.ChildNodesInViewport == current.Children?.Count)
-      {
-        Debug.Assert(current.ChildNodesInViewport != 0, "Empty non-leaf nodes should not exist.");
-        Debug.Assert(
-          !current.IsLeaf,
-          $"{nameof(RTreeNode<T>.ChildNodesInViewport)} is expected to only be set for non-leaf nodes.");
-
-        if (added == 0)
-        {
-          // Since no items have yet been added and the current node is already fully contained,
-          // no need to reiterate it again to update the viewport index.
-          viewportItemsIndex += current.ChildNodesInViewport;
-          continue;
-        }
-
-        // Even if updating the index is required, skip boundary checks
-        UpdateViewportItemsIndex(current, ref viewportItemsIndex);
-        continue;
-      }
-
-      var currentBoundary = current.Boundary;
-      if (!viewport.Intersects(currentBoundary))
-      {
-        continue;
-      }
 
       if (current.IsLeaf)
       {
-        Debug.Assert(current.ViewportItemsIndex == -1);
-        current.ViewportItemsIndex = viewportItemsIndex;
+        if (current.IsInViewport)
+        {
+          // Already part of the viewport.
+          Debug.Assert(_viewportItems.Contains(current.Data));
+          continue;
+        }
+
+        if (!current.Boundary.Intersects(viewport))
+        {
+          Debug.Assert(!_viewportItems.Contains(current.Data));
+          continue;
+        }
+
+        current.IsInViewport = true;
+        _viewportItems.Add(current.Data);
 
         var parent = current.Parent;
-        Debug.Assert(parent != null);
+        Debug.Assert(parent != null || current == Root, "Orphaned node detected.");
 
         while (parent != null)
         {
           parent.ChildNodesInViewport++;
+          Debug.Assert(parent.ChildNodesInViewport <= parent.Children!.Count);
+
           // If count == 1: No children of the parent have been tracked before,
           // hence notify its parent as well that it is now part of the viewport nodes.
           parent = parent.ChildNodesInViewport == 1 ? parent.Parent : null;
         }
 
-        _viewportItems.Insert(viewportItemsIndex, current.Data);
-
-        added++;
-        viewportItemsIndex++;
         continue;
       }
 
-      // Iterate reversed, to preserve the same order in the viewport items as for the nodes
-      for (var index = current.Children.Count - 1; index >= 0; index--)
+      // This is a non-leaf node.
+      if (!viewport.Intersects(current.Boundary))
       {
-        var child = current.Children[index];
-        _queryStack.Push(child);
-      }
-    }
-
-    Debug.Assert(_viewportItems.Count == viewportItemsIndex);
-  }
-
-  private void UpdateViewportItemsIndex(RTreeNode<T> node, ref int viewportItemsIndex)
-  {
-    var queryStackOffset = _queryStack.Count;
-    _queryStack.Push(node);
-
-    while (_queryStack.Count > queryStackOffset)
-    {
-      var current = _queryStack.Pop();
-      if (current.IsLeaf)
-      {
-        if (current.ViewportItemsIndex == -1)
-        {
-          // Not yet part of the viewport items, hence leave as is.
-          continue;
-        }
-
-        current.ViewportItemsIndex = viewportItemsIndex;
-        Debug.Assert(Equals(_viewportItems[viewportItemsIndex], current.Data));
-        viewportItemsIndex++;
-
+        Debug.Assert(current.ChildNodesInViewport == 0);
         continue;
       }
 
+      // Iterate backwards for pushing to the stack, since this will result in the same order in _viewportItems as in
+      // current.Children. There should not be any advantages regarding memory layout, but it is just a bit easier to
+      // debug and compare items when viewed in the debugger.
       for (var index = current.Children.Count - 1; index >= 0; index--)
       {
         var child = current.Children[index];

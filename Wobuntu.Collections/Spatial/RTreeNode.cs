@@ -19,10 +19,10 @@ internal class RTreeNode<T>
   private readonly List<RTreeNode<T>>? _children;
 
   internal RTreeNode<T>? Parent;
-  internal T? Data;
   internal RTreeBoundary Boundary;
-  internal int ViewportItemsIndex = -1;
   internal int ChildNodesInViewport;
+  internal T? Data;
+  internal bool IsInViewport;
 
   private RTreeNode(T data, RTreeBoundary boundary)
   {
