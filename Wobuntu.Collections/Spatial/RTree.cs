@@ -145,8 +145,6 @@ public class RTree<T>
     var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
     _itemToNode[item] = node;
     InsertNode(node);
-
-    AddNewIntersectingViewportItems(_viewport);
   }
 
   public void AddRange(Span<T> items)
@@ -154,9 +152,9 @@ public class RTree<T>
     if (Count == 0 && items.Length > _maxEntriesPerNode)
     {
       BulkInitialize(items);
+      return;
     }
-    else
-    {
+
       for (var index = 0; index < items.Length; index++)
       {
         var item = items[index];
@@ -165,9 +163,6 @@ public class RTree<T>
         InsertNode(node);
       }
     }
-
-    AddNewIntersectingViewportItems(_viewport);
-  }
 
   public bool Remove(T item)
   {
@@ -178,8 +173,8 @@ public class RTree<T>
 
     if (node == Root)
     {
+      _viewportItems.Remove(node.Data!);
       Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
-      RemoveNoLongerIntersectingViewportItems(_viewport);
       return true;
     }
 
@@ -196,7 +191,6 @@ public class RTree<T>
       Root.Parent = null;
     }
 
-    RemoveNoLongerIntersectingViewportItems(_viewport);
     return true;
   }
 
@@ -219,8 +213,6 @@ public class RTree<T>
         Root = Root.Children[0];
       }
     }
-
-    RemoveNoLongerIntersectingViewportItems(_viewport);
   }
 
   public void Clear()
@@ -408,12 +400,24 @@ public class RTree<T>
     {
       newRoot = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
       newRoot.AddChildDirect(Root);
+      if (Root.IsInViewport || Root.ChildNodesInViewport > 0)
+      {
+        newRoot.ChildNodesInViewport = 1;
+    }
     }
 
     for (var index = 0; index < cutoffBranches.Count; index++)
     {
       var node = cutoffBranches[index];
       newRoot.AddChildDirect(node);
+
+      if (node is { IsInViewport: false, ChildNodesInViewport: <= 0 })
+      {
+        continue;
+      }
+
+        newRoot.ChildNodesInViewport++;
+        Debug.Assert(newRoot.ChildNodesInViewport <= newRoot.Children!.Count);
     }
 
     Root = newRoot;
@@ -438,9 +442,24 @@ public class RTree<T>
 
     if (toRemove.IsLeaf)
     {
+      if (toRemove.IsInViewport)
+      {
+        Debug.Assert(parent.ChildNodesInViewport > 0);
+        parent.ChildNodesInViewport--;
+
+        var actuallyRemovedFromViewportItems = _viewportItems.Remove(toRemove.Data);
+        Debug.Assert(actuallyRemovedFromViewportItems);
+      }
+
       parent = MoveChildrenToParentIfCapacityAvailable(parent);
       RemoveUnderfullFromAncestorNodes(parent);
       return true;
+    }
+
+    if (toRemove.ChildNodesInViewport > 0)
+    {
+      Debug.Assert(parent.ChildNodesInViewport > 0);
+      parent.ChildNodesInViewport--;
     }
 
     if (parent.Children.Count + toRemove.Children.Count < _maxEntriesPerNode)
@@ -449,6 +468,14 @@ public class RTree<T>
       {
         var child = toRemove.Children[index];
         parent.AddChildDirect(child);
+
+        if (child is { IsInViewport: false, ChildNodesInViewport: <= 0 })
+        {
+          continue;
+      }
+
+        parent.ChildNodesInViewport++;
+        Debug.Assert(parent.ChildNodesInViewport <= parent.Children.Count);
       }
 
       return true;
@@ -471,12 +498,26 @@ public class RTree<T>
     {
       parent.RemoveChildDirect(current); // This could cause the parent to become underfull as well, hence the loop.
 
+      if (current.ChildNodesInViewport > 0)
+      {
+        Debug.Assert(parent.ChildNodesInViewport > 0);
+        parent.ChildNodesInViewport--;
+      }
+
       if (parent.Children!.Count + current.Children!.Count < _maxEntriesPerNode)
       {
         for (var index = 0; index < current.Children.Count; index++)
         {
           var child = current.Children[index];
           parent.AddChildDirect(child);
+
+          if (child is { IsInViewport: false, ChildNodesInViewport: <= 0 })
+          {
+            continue;
+          }
+
+          parent.ChildNodesInViewport++;
+          Debug.Assert(parent.ChildNodesInViewport <= parent.Children.Count);
         }
       }
       else
@@ -755,7 +796,7 @@ public class RTree<T>
     }
   }
 
-  private void AddNewIntersectingViewportItems(RTreeBoundary viewport)
+  private void AddNewIntersectingViewportItems(RTreeBoundary viewport, RTreeNode<T>? startAtNode = null)
   {
     Debug.Assert(
       !viewport.IsEmpty,
@@ -774,7 +815,7 @@ public class RTree<T>
     }
 
     Debug.Assert(_queryStack.Count == 0);
-    _queryStack.Push(Root);
+    _queryStack.Push(startAtNode ?? Root);
 
     while (_queryStack.Count > 0)
     {
@@ -849,10 +890,24 @@ public class RTree<T>
 
     parent.RemoveChildDirect(node);
 
+    if (node.ChildNodesInViewport > 0)
+    {
+      Debug.Assert(parent.ChildNodesInViewport > 0);
+      parent.ChildNodesInViewport--;
+    }
+
     for (var index = 0; index < node.Children.Count; index++)
     {
       var child = node.Children[index];
       parent.AddChildDirect(child);
+
+      if (child is { IsInViewport: false, ChildNodesInViewport: <= 0 })
+      {
+        continue;
+      }
+
+      parent.ChildNodesInViewport++;
+      Debug.Assert(parent.ChildNodesInViewport <= parent.Children!.Count);
     }
 
     return parent;
