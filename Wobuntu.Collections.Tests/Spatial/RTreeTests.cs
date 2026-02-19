@@ -500,13 +500,13 @@ public class RTreeTests
     Assert.Equal(4, l12.Children.Count);
     Assert.Equal(new RTreeBoundary(20, 30, 80, 60), l12.Boundary); // right side (no container nodes, just leafs)
 
-    var l25 = l11.Children[0]; // Node 7
+    var l25 = l12.Children[0]; // Node 6
     Assert.True(l25.IsLeaf);
-    var l26 = l11.Children[1]; // Node 5
+    var l26 = l12.Children[1]; // Node 4
     Assert.True(l26.IsLeaf);
-    var l27 = l11.Children[2]; // Node 3
+    var l27 = l12.Children[2]; // Node 2
     Assert.True(l27.IsLeaf);
-    var l28 = l11.Children[3]; // Node 1
+    var l28 = l12.Children[3]; // Node 0
     Assert.True(l28.IsLeaf);
   }
 
@@ -735,16 +735,16 @@ public class RTreeTests
   }
 
   [Fact]
-  public void ChooseInsertLeaf_NoMatchingChildBoundariesRootCapacityAvailable_ReturnsRootNode()
+  public void ChooseInsertParent_NoMatchingChildBoundariesRootCapacityAvailable_ReturnsRootNode()
   {
     // Arrange
     var options = new RTreeOptions { MaxEntriesPerNode = 3 };
     var tree = new RTree<int>(BoundarySelector, options) { 10, 50 };
 
     // Act
-    var result1 = tree.ChooseInsertLeaf(BoundarySelector(90));
-    var result2 = tree.ChooseInsertLeaf(new RTreeBoundary());
-    var result3 = tree.ChooseInsertLeaf(BoundarySelector(-10));
+    var result1 = tree.ChooseInsertParent(BoundarySelector(90));
+    var result2 = tree.ChooseInsertParent(new RTreeBoundary());
+    var result3 = tree.ChooseInsertParent(BoundarySelector(-10));
 
     // Assert
     Assert.Equal(tree.Root, result1);
@@ -756,16 +756,16 @@ public class RTreeTests
   }
 
   [Fact]
-  public void ChooseInsertLeaf_NoMatchingChildBoundariesRootNoMoreCapacity_ReturnsClosestChild()
+  public void ChooseInsertParent_NoMatchingChildBoundariesRootNoMoreCapacity_ReturnsClosestChild()
   {
     // Arrange
     var options = new RTreeOptions { MaxEntriesPerNode = 2 };
     var tree = new RTree<int>(BoundarySelector, options) { 10, 50 };
 
     // Act
-    var result1 = tree.ChooseInsertLeaf(BoundarySelector(90));
-    var result2 = tree.ChooseInsertLeaf(new RTreeBoundary());
-    var result3 = tree.ChooseInsertLeaf(BoundarySelector(-10));
+    var result1 = tree.ChooseInsertParent(BoundarySelector(90));
+    var result2 = tree.ChooseInsertParent(new RTreeBoundary());
+    var result3 = tree.ChooseInsertParent(BoundarySelector(-10));
 
     // Assert
     Assert.Equal(tree.Root.Children![1], result1);

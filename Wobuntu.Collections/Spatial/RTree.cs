@@ -58,13 +58,10 @@ public class RTree<T>
   private RTreeBoundary _actualViewport;
   private readonly SynchronizedObservableOrderedSet<T> _viewportItems;
 
-  internal RTreeNode<T> Root = null!; // Internal for access in UTests
+  internal RTreeNode<T> Root; // Internal for access in UTests
 
   public RTree(Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
-    : this(options ?? new RTreeOptions(), boundarySelector)
-  {
-    Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
-  }
+    : this(options ?? new RTreeOptions(), boundarySelector) { }
 
   public RTree(Span<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
     : this(options ?? new RTreeOptions(), boundarySelector)
@@ -84,6 +81,8 @@ public class RTree<T>
     _queryStack = new Stack<RTreeNode<T>>(DefaultQueryStackMinCapacity);
     _reusedQueryResult = new List<T>(DefaultQueryResultMinCapacity);
     _viewportItems = new SynchronizedObservableOrderedSet<T>(DefaultQueryResultMinCapacity);
+
+    Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
   }
 
   public int Count => _itemToNode.Count;
@@ -174,6 +173,7 @@ public class RTree<T>
     if (node == Root)
     {
       _viewportItems.Remove(node.Data!);
+      _itemToNode.Remove(item);
       Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
       return true;
     }
@@ -199,9 +199,20 @@ public class RTree<T>
     ArgumentNullException.ThrowIfNull(items);
     foreach (var item in items)
     {
-      if (item == null!
-          || !_itemToNode.TryGetValue(item, out var node)
-          || !RemoveNode(node))
+      if (item == null! || !_itemToNode.TryGetValue(item, out var node))
+      {
+        continue;
+      }
+
+      if (node == Root)
+      {
+        _viewportItems.Remove(node.Data!);
+        _itemToNode.Remove(item);
+        Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
+        continue;
+      }
+
+      if (!RemoveNode(node))
       {
         continue;
       }
@@ -211,6 +222,7 @@ public class RTree<T>
       if (Root is { Children.Count: 1, IsLeaf: false })
       {
         Root = Root.Children[0];
+        Root.Parent = null;
       }
     }
   }
@@ -303,7 +315,7 @@ public class RTree<T>
 
   IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-  internal RTreeNode<T> ChooseInsertLeaf(RTreeBoundary itemBoundary)
+  internal RTreeNode<T> ChooseInsertParent(RTreeBoundary itemBoundary)
   {
     // Note: Internal for tests
     var node = Root;
@@ -360,7 +372,7 @@ public class RTree<T>
 
   private void InsertNode(RTreeNode<T> item)
   {
-    var targetNode = ChooseInsertLeaf(item.Boundary);
+    var targetNode = ChooseInsertParent(item.Boundary);
     if (targetNode.IsLeaf)
     {
       if (targetNode == Root)

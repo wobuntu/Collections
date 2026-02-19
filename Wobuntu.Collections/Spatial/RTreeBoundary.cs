@@ -21,8 +21,6 @@ public readonly struct RTreeBoundary
   {
     ThrowIfInfiniteOrNaN(x);
     ThrowIfInfiniteOrNaN(y);
-    ThrowIfInfiniteOrNaN(width);
-    ThrowIfInfiniteOrNaN(height);
     ThrowIfNegativeInfiniteOrNaN(width);
     ThrowIfNegativeInfiniteOrNaN(height);
 
@@ -59,7 +57,7 @@ public readonly struct RTreeBoundary
     && Bottom >= other.Bottom;
 
   public bool Contains(double x, double y) =>
-    x >= Left && x <= Right && y >= Top && y <= Bottom;
+    !IsEmpty && x >= Left && x <= Right && y >= Top && y <= Bottom;
 
   public RTreeBoundary Union(RTreeBoundary other)
   {
@@ -79,30 +77,6 @@ public readonly struct RTreeBoundary
     var bottom = Math.Max(Bottom, other.Bottom);
 
     return new RTreeBoundary(left, top, right - left, bottom - top);
-  }
-
-  internal double GetAreaEnlargementOnUnion(RTreeBoundary other)
-  {
-    if (IsEmpty)
-    {
-      return other.Area;
-    }
-
-    if (other.IsEmpty)
-    {
-      return 0;
-    }
-
-    var left = Math.Min(Left, other.Left);
-    var top = Math.Min(Top, other.Top);
-    var right = Math.Max(Right, other.Right);
-    var bottom = Math.Max(Bottom, other.Bottom);
-
-    var width = right - left;
-    var height = bottom - top;
-    var area = width * height;
-
-    return area - Area;
   }
 
   public override bool Equals(object? obj) =>

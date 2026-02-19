@@ -53,7 +53,7 @@ public class RTreeNodeTests
     var node = RTreeNode<Guid>.CreateNonLeaf(16);
     var capacity = ((List<RTreeNode<Guid>>)node.Children!).Capacity;
     Assert.Equal(17, capacity);
-    Assert.Equal(16, (int)node.RemainingCapacity);
+    Assert.Equal(16, node.RemainingCapacity);
   }
 
   [Fact]
@@ -62,7 +62,7 @@ public class RTreeNodeTests
     var node = RTreeNode<Guid>.CreateNonLeaf(2);
     var capacity = ((List<RTreeNode<Guid>>)node.Children!).Capacity;
     Assert.Equal(RTreeOptions.MinEntriesPerNodeMinimum + 1, capacity);
-    Assert.Equal(RTreeOptions.MinEntriesPerNodeMinimum, (int)node.RemainingCapacity);
+    Assert.Equal(RTreeOptions.MinEntriesPerNodeMinimum, node.RemainingCapacity);
   }
 
   [Fact]
@@ -127,12 +127,12 @@ public class RTreeNodeTests
     for (var index = 1; index <= capacity; index++)
     {
       filledUp.AddChildDirect(RTreeNode<string>.CreateLeaf("Test" + index, new RTreeBoundary()));
-      Assert.Equal(capacity - index, (int)filledUp.RemainingCapacity);
+      Assert.Equal(capacity - index, filledUp.RemainingCapacity);
     }
 
-    Assert.Equal(0, (int)filledUp.RemainingCapacity);
+    Assert.Equal(0, filledUp.RemainingCapacity);
     Assert.Equal(capacity, filledUp.Children!.Count);
-    Assert.Equal(0, (int)exceedingCapacity.RemainingCapacity);
+    Assert.Equal(0, exceedingCapacity.RemainingCapacity);
     Assert.Equal(capacity + 1, exceedingCapacity.Children!.Count);
   }
 

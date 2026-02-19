@@ -52,7 +52,7 @@ internal class RTreeNode<T>
 
   internal IReadOnlyList<RTreeNode<T>>? Children => _children;
 
-  internal uint RemainingCapacity => IsLeaf ? 0 : (uint)Math.Max(_maxEntries - _children.Count, 0);
+  internal int RemainingCapacity => IsLeaf ? 0 : Math.Max(_maxEntries - _children.Count, 0);
 
   internal bool IsUnderFull => !IsLeaf && _children.Count < _minEntries;
 
@@ -329,18 +329,13 @@ internal class RTreeNode<T>
 
     for (var index = 1; index < _children.Count; index++)
     {
-      var addedBoundary = _children[index].Boundary;
-      if (addedBoundary.IsEmpty)
+      var childBoundary = _children[index].Boundary;
+      if (childBoundary.IsEmpty)
       {
         continue;
       }
 
-      if (Boundary.IsEmpty)
-      {
-        Boundary = addedBoundary;
-      }
-
-      Boundary = Boundary.Union(_children[index].Boundary);
+      Boundary = Boundary.IsEmpty ? childBoundary : Boundary.Union(childBoundary);
     }
   }
 

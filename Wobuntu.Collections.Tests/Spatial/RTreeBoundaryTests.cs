@@ -150,6 +150,7 @@ public class RTreeBoundaryTests
     // Act / Assert
     Assert.False(first.Contains(second));
     Assert.False(second.Contains(first));
+    Assert.False(first.Contains(0, 0)); // point at origin of empty boundary
   }
 
   [Fact]
@@ -231,40 +232,4 @@ public class RTreeBoundaryTests
     Assert.Equal(first, result2);
   }
 
-  [Theory]
-  [InlineData(0d, 0d, 90d, 0d, 900d)]
-  [InlineData(90d, 0d, 0d, 0d, 900d)]
-  [InlineData(0d, 0d, 0d, 90d, 900d)]
-  [InlineData(0d, 90d, 0d, 0d, 900d)]
-  [InlineData(0d, 0d, 90d, 90d, 9900d)]
-  [InlineData(90d, 90d, 0d, 0d, 9900d)]
-  [InlineData(90d, 90d, 90d, 90d, 0d)]
-  public void GetAreaEnlargementOnUnion_ReturnsCorrectSize(double x1, double y1, double x2, double y2, double expected)
-  {
-    // Arrange
-    var first = new RTreeBoundary(x1, y1, 10, 10);
-    var second = new RTreeBoundary(x2, y2, 10, 10);
-
-    // Act
-    var result = first.GetAreaEnlargementOnUnion(second);
-
-    // Assert
-    Assert.Equal(result, expected);
-  }
-
-  [Fact]
-  public void GetAreaEnlargementOnUnion_WithZeroWidthOrHeightBoundaries_ZeroSizedTreatedAsUnset()
-  {
-    // Arrange
-    var first = new RTreeBoundary(100, 200, 300, 400);
-    var second = new RTreeBoundary();
-
-    // Act
-    var result1 = first.GetAreaEnlargementOnUnion(second);
-    var result2 = second.GetAreaEnlargementOnUnion(first);
-
-    // Assert
-    Assert.Equal(0, result1);
-    Assert.Equal(first.Area, result2);
-  }
 }
