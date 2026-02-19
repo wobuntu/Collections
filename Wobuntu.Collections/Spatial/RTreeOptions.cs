@@ -7,7 +7,6 @@ public class RTreeOptions
   private const string PercentageOutOfRange = "The value must be a number between 0 and 1.";
 
   public const int DefaultMaxEntriesPerNode = 12;
-  public const int MaxEntriesPerNodeMinimum = 2;
   public const int MinEntriesPerNodeMinimum = 2;
 
   private readonly int _maxEntriesPerNode = DefaultMaxEntriesPerNode;
@@ -18,7 +17,7 @@ public class RTreeOptions
     get => _maxEntriesPerNode;
     init
     {
-      if (value < MaxEntriesPerNodeMinimum)
+      if (value < MinEntriesPerNodeMinimum)
       {
         throw new ArgumentOutOfRangeException(nameof(value), value, "A maximum entry capacity of at least 2 is required.");
       }

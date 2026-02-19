@@ -46,7 +46,6 @@ public class RTree<T>
   private const int DefaultQueryStackMinCapacity = 64;
 
   private readonly Stack<RTreeNode<T>> _queryStack;
-  private readonly List<T> _reusedQueryResult;
 
   private readonly Dictionary<T, RTreeNode<T>> _itemToNode;
 
@@ -79,7 +78,6 @@ public class RTree<T>
 
     _itemToNode = new Dictionary<T, RTreeNode<T>>();
     _queryStack = new Stack<RTreeNode<T>>(DefaultQueryStackMinCapacity);
-    _reusedQueryResult = new List<T>(DefaultQueryResultMinCapacity);
     _viewportItems = new SynchronizedObservableOrderedSet<T>(DefaultQueryResultMinCapacity);
 
     Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
@@ -229,7 +227,6 @@ public class RTree<T>
 
   public void Clear()
   {
-    _reusedQueryResult.Clear();
     Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
     _itemToNode.Clear();
     ResetViewportItems();
@@ -238,18 +235,26 @@ public class RTree<T>
   /// <summary>
   ///   Queries the specified boundary for intersecting or contained items.<br />
   ///   Items with empty boundaries are ignored and will not be part of the result set.<br />
-  ///   The resulting collection is reused and should not be stored locally. A subsequent call to <see cref="Query"/>
-  ///   will repopulate this collection to avoid unnecessary reallocation.
+  ///   The result will be populated into the <paramref name="targetCollection"/>, which is not cleared by this method.
   /// </summary>
-  /// <param name="searchBoundary">The boundary for which intersecting or contained items shall be returned.</param>
-  public IReadOnlyList<T> Query(RTreeBoundary searchBoundary)
+  /// <param name="searchBoundary">
+  ///   The boundary for which intersecting or contained items shall be added to the
+  ///   <paramref name="targetCollection"/>.
+  /// </param>
+  /// <param name="targetCollection">
+  ///   The target collection, to which the items of the query result are being added.<br />
+  ///   The collection is not cleared by this method.
+  /// </param>
+  public int QueryTo(RTreeBoundary searchBoundary, ICollection<T> targetCollection)
   {
+    ArgumentNullException.ThrowIfNull(targetCollection);
+
     if (!Root.Boundary.Intersects(searchBoundary))
     {
-      return [];
+      return 0;
     }
 
-    _reusedQueryResult.Clear();
+    var count = 0;
     _queryStack.Push(Root);
 
     // The stack will only hold nodes, which are within the search boundary.
@@ -258,7 +263,8 @@ public class RTree<T>
       var current = _queryStack.Pop();
       if (current.IsLeaf)
       {
-        _reusedQueryResult.Add(current.Data);
+        targetCollection.Add(current.Data);
+        count++;
         continue;
       }
 
@@ -278,7 +284,8 @@ public class RTree<T>
             var contained = _queryStack.Pop();
             if (contained.IsLeaf)
             {
-              _reusedQueryResult.Add(contained.Data);
+              targetCollection.Add(contained.Data);
+              count++;
               continue;
             }
 
@@ -299,7 +306,7 @@ public class RTree<T>
       }
     }
 
-    return _reusedQueryResult;
+    return count;
   }
 
   public bool Contains(T item) => item != null! && _itemToNode.ContainsKey(item);
@@ -327,7 +334,7 @@ public class RTree<T>
     var (centerX, centerY) = (itemBoundary.CenterX, itemBoundary.CenterY);
 
     // Iterate over all children of the current node, find the best one, then repeat using the selected node again.
-    // Do so, until the best matching leaf is found. Its parent will be the insert leaf if it has capacity, otherwise
+    // Do so, until the best matching leaf is found. Its parent will be the insert node if it has capacity, otherwise
     // insert a new layer into which the new value can be inserted.
     while (true)
     {
@@ -484,9 +491,12 @@ public class RTree<T>
     var current = node;
     while (current is { IsUnderFull: true, Parent: { } parent })
     {
+      Debug.Assert(!current.IsLeaf);
+      Debug.Assert(!parent.IsLeaf);
+
       parent.RemoveChildDirect(current); // This could cause the parent to become underfull as well, hence the loop.
 
-      if (parent.Children!.Count + current.Children!.Count < _maxEntriesPerNode)
+      if (parent.Children.Count + current.Children.Count < _maxEntriesPerNode)
       {
         for (var index = 0; index < current.Children.Count; index++)
         {
@@ -783,12 +793,6 @@ public class RTree<T>
 
     if (viewport.IsEmpty)
     {
-      return;
-    }
-
-    if (_viewport.IsEmpty)
-    {
-      Debug.Assert(_viewportItems.Count == 0);
       return;
     }
 

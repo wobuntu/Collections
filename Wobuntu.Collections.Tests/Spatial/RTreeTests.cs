@@ -118,8 +118,15 @@ public class RTreeTests
     });
 
     // Act
-    var query0And2 = tree.Query(new RTreeBoundary(25, 65, 40, 20)).Order().ToArray();
-    var query5And7 = tree.Query(new RTreeBoundary(-95, 35, 60, 10)).Order().ToArray();
+    var target = new List<int>();
+
+    tree.QueryTo(new RTreeBoundary(25, 65, 40, 20), target);
+    var query0And2 = target.Order().ToArray();
+    target.Clear();
+
+    tree.QueryTo(new RTreeBoundary(-95, 35, 60, 10), target);
+    var query5And7 = target.Order().ToArray();
+    target.Clear();
 
     // Assert
     Assert.Equal(2, query0And2.Length);
@@ -161,7 +168,9 @@ public class RTreeTests
     });
 
     // Act
-    var query2To5 = tree.Query(new RTreeBoundary(-75, 35, 150, 40)).Order().ToArray();
+    var target = new List<int>();
+    tree.QueryTo(new RTreeBoundary(-75, 35, 150, 40), target);
+    var query2To5 = target.Order().ToArray();
 
     // Assert
     Assert.Equal(4, query2To5.Length);
@@ -204,7 +213,9 @@ public class RTreeTests
     });
 
     // Act
-    var queryWithout8Or9 = tree.Query(new RTreeBoundary(-500, -500, 1000, 1000)).Order().ToArray();
+    var target = new List<int>();
+    tree.QueryTo(new RTreeBoundary(-500, -500, 1000, 1000), target);
+    var queryWithout8Or9 = target.Order().ToArray();
 
     // Assert
     Assert.Equal(8, queryWithout8Or9.Length);
