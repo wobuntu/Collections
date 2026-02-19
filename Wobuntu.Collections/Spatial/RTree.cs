@@ -155,14 +155,14 @@ public class RTree<T>
       return;
     }
 
-      for (var index = 0; index < items.Length; index++)
-      {
-        var item = items[index];
-        var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
-        _itemToNode[item] = node;
-        InsertNode(node);
-      }
+    for (var index = 0; index < items.Length; index++)
+    {
+      var item = items[index];
+      var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
+      _itemToNode[item] = node;
+      InsertNode(node);
     }
+  }
 
   public bool Remove(T item)
   {
@@ -378,6 +378,11 @@ public class RTree<T>
 
     targetNode.AddChildDirect(item);
 
+    if (!_actualViewport.IsEmpty)
+    {
+      AddNewIntersectingViewportItems(_actualViewport, item);
+    }
+
     var cutoffBranches = RebalanceAncestorNodes(targetNode);
     if (cutoffBranches == null || cutoffBranches.Count == 0)
     {
@@ -400,24 +405,12 @@ public class RTree<T>
     {
       newRoot = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
       newRoot.AddChildDirect(Root);
-      if (Root.IsInViewport || Root.ChildNodesInViewport > 0)
-      {
-        newRoot.ChildNodesInViewport = 1;
-    }
     }
 
     for (var index = 0; index < cutoffBranches.Count; index++)
     {
       var node = cutoffBranches[index];
       newRoot.AddChildDirect(node);
-
-      if (node is { IsInViewport: false, ChildNodesInViewport: <= 0 })
-      {
-        continue;
-      }
-
-        newRoot.ChildNodesInViewport++;
-        Debug.Assert(newRoot.ChildNodesInViewport <= newRoot.Children!.Count);
     }
 
     Root = newRoot;
@@ -442,24 +435,15 @@ public class RTree<T>
 
     if (toRemove.IsLeaf)
     {
-      if (toRemove.IsInViewport)
+      if (toRemove.IsVisibleInViewport)
       {
-        Debug.Assert(parent.ChildNodesInViewport > 0);
-        parent.ChildNodesInViewport--;
-
-        var actuallyRemovedFromViewportItems = _viewportItems.Remove(toRemove.Data);
-        Debug.Assert(actuallyRemovedFromViewportItems);
+        var actuallyRemoved = _viewportItems.Remove(toRemove.Data);
+        Debug.Assert(actuallyRemoved);
       }
 
       parent = MoveChildrenToParentIfCapacityAvailable(parent);
       RemoveUnderfullFromAncestorNodes(parent);
       return true;
-    }
-
-    if (toRemove.ChildNodesInViewport > 0)
-    {
-      Debug.Assert(parent.ChildNodesInViewport > 0);
-      parent.ChildNodesInViewport--;
     }
 
     if (parent.Children.Count + toRemove.Children.Count < _maxEntriesPerNode)
@@ -468,14 +452,6 @@ public class RTree<T>
       {
         var child = toRemove.Children[index];
         parent.AddChildDirect(child);
-
-        if (child is { IsInViewport: false, ChildNodesInViewport: <= 0 })
-        {
-          continue;
-      }
-
-        parent.ChildNodesInViewport++;
-        Debug.Assert(parent.ChildNodesInViewport <= parent.Children.Count);
       }
 
       return true;
@@ -498,26 +474,12 @@ public class RTree<T>
     {
       parent.RemoveChildDirect(current); // This could cause the parent to become underfull as well, hence the loop.
 
-      if (current.ChildNodesInViewport > 0)
-      {
-        Debug.Assert(parent.ChildNodesInViewport > 0);
-        parent.ChildNodesInViewport--;
-      }
-
       if (parent.Children!.Count + current.Children!.Count < _maxEntriesPerNode)
       {
         for (var index = 0; index < current.Children.Count; index++)
         {
           var child = current.Children[index];
           parent.AddChildDirect(child);
-
-          if (child is { IsInViewport: false, ChildNodesInViewport: <= 0 })
-          {
-            continue;
-          }
-
-          parent.ChildNodesInViewport++;
-          Debug.Assert(parent.ChildNodesInViewport <= parent.Children.Count);
         }
       }
       else
@@ -698,22 +660,27 @@ public class RTree<T>
     Debug.Assert(_queryStack.Count == 0);
     _queryStack.Push(Root);
 
+    var markedForRemoval = 0;
+
     while (_queryStack.Count > 0)
     {
       var current = _queryStack.Pop();
       if (current.IsLeaf)
       {
-        current.IsInViewport = false;
+        if (current.IsVisibleInViewport)
+        {
+          markedForRemoval++;
+        }
+
+        current.IsVisibleInViewport = false;
         continue;
       }
 
-      if (current.ChildNodesInViewport == 0)
+      if (current.ChildrenVisibleInViewport <= 0)
       {
         // No children have been in the viewport yet, hence no need to iterate them again.
         continue;
       }
-
-      current.ChildNodesInViewport = 0;
 
       for (var index = 0; index < current.Children.Count; index++)
       {
@@ -722,6 +689,7 @@ public class RTree<T>
       }
     }
 
+    Debug.Assert(_viewportItems.Count == markedForRemoval);
     _viewportItems.Clear();
   }
 
@@ -752,30 +720,28 @@ public class RTree<T>
 
       if (current.IsLeaf)
       {
-        if (!current.IsInViewport || current.Boundary.Intersects(viewport))
+        if (!current.IsVisibleInViewport)
         {
+          // Not in viewport, nothing to remove.
+          Debug.Assert(!_viewportItems.Contains(current.Data));
           continue;
         }
 
-        current.IsInViewport = false;
-        _viewportItems.Remove(current.Data);
-
-        var parent = current.Parent;
-        Debug.Assert(parent != null || current == Root, "Orphaned node detected.");
-
-        while (parent != null)
+        if (current.Boundary.Intersects(viewport))
         {
-          Debug.Assert(parent.ChildNodesInViewport > 0);
-          parent.ChildNodesInViewport--;
-
-          // If count == 0: Notify its parent as well that it is no longer part of the viewport.
-          parent = parent.ChildNodesInViewport == 0 ? parent.Parent : null;
+          // Not yet part of viewport items, but as adding/removing is done in batches and separate methods,
+          // this node may just not yet have been added by the other method.
+          continue;
         }
 
+        current.IsVisibleInViewport = false;
+        var actuallyRemoved = _viewportItems.Remove(current.Data);
+
+        Debug.Assert(actuallyRemoved);
         continue;
       }
 
-      if (current.ChildNodesInViewport == 0)
+      if (current.ChildrenVisibleInViewport <= 0)
       {
         // No need to iterate children if none of them are in the viewport.
         continue;
@@ -784,7 +750,7 @@ public class RTree<T>
       if (viewport.Contains(current.Boundary))
       {
         // All items in this subtree are still within the new viewport, nothing to remove.
-        Debug.Assert(current.Children.Count == current.ChildNodesInViewport);
+        Debug.Assert(current.Children.Count == current.ChildrenVisibleInViewport);
         continue;
       }
 
@@ -823,7 +789,8 @@ public class RTree<T>
 
       if (current.IsLeaf)
       {
-        if (current.IsInViewport)
+        var wasInViewport = current.IsVisibleInViewport;
+        if (wasInViewport)
         {
           // Already part of the viewport.
           Debug.Assert(_viewportItems.Contains(current.Data));
@@ -832,25 +799,15 @@ public class RTree<T>
 
         if (!current.Boundary.Intersects(viewport))
         {
-          Debug.Assert(!_viewportItems.Contains(current.Data));
+          // Note that the item could still exist in the _viewportItems, which is valid,
+          // e.g. due to viewport caching (see usage of _actualViewport/_viewport).
           continue;
         }
 
-        current.IsInViewport = true;
-        _viewportItems.Add(current.Data);
+        current.IsVisibleInViewport = true;
 
-        var parent = current.Parent;
-        Debug.Assert(parent != null || current == Root, "Orphaned node detected.");
-
-        while (parent != null)
-        {
-          parent.ChildNodesInViewport++;
-          Debug.Assert(parent.ChildNodesInViewport <= parent.Children!.Count);
-
-          // If count == 1: No children of the parent have been tracked before,
-          // hence notify its parent as well that it is now part of the viewport nodes.
-          parent = parent.ChildNodesInViewport == 1 ? parent.Parent : null;
-        }
+        var actuallyAdded = _viewportItems.Add(current.Data);
+        Debug.Assert(wasInViewport != actuallyAdded);
 
         continue;
       }
@@ -858,7 +815,8 @@ public class RTree<T>
       // This is a non-leaf node.
       if (!viewport.Intersects(current.Boundary))
       {
-        Debug.Assert(current.ChildNodesInViewport == 0);
+        // Note that the item could still exist in the _viewportItems, which is valid,
+        // e.g. due to viewport caching (see usage of _actualViewport/_viewport).
         continue;
       }
 
@@ -883,31 +841,17 @@ public class RTree<T>
       return node;
     }
 
-    if (parent.RemainingCapacity < node.Children.Count - 1) // -1: For the node which is replaced itself
+    if (parent.RemainingCapacity < node.Children.Count - 1) // -1: For the node which moves its children up
     {
       return node;
     }
 
     parent.RemoveChildDirect(node);
 
-    if (node.ChildNodesInViewport > 0)
-    {
-      Debug.Assert(parent.ChildNodesInViewport > 0);
-      parent.ChildNodesInViewport--;
-    }
-
     for (var index = 0; index < node.Children.Count; index++)
     {
       var child = node.Children[index];
       parent.AddChildDirect(child);
-
-      if (child is { IsInViewport: false, ChildNodesInViewport: <= 0 })
-      {
-        continue;
-      }
-
-      parent.ChildNodesInViewport++;
-      Debug.Assert(parent.ChildNodesInViewport <= parent.Children!.Count);
     }
 
     return parent;

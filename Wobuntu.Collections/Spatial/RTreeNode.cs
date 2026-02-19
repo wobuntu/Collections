@@ -18,11 +18,12 @@ internal class RTreeNode<T>
   private readonly int _minEntries;
   private readonly List<RTreeNode<T>>? _children;
 
+  private int _childrenVisibleInViewport;
+  private bool _isVisibleInViewport;
+
   internal RTreeNode<T>? Parent;
   internal RTreeBoundary Boundary;
-  internal int ChildNodesInViewport;
   internal T? Data;
-  internal bool IsInViewport;
 
   private RTreeNode(T data, RTreeBoundary boundary)
   {
@@ -64,12 +65,70 @@ internal class RTreeNode<T>
     }
   }
 
+  internal int ChildrenVisibleInViewport
+  {
+    get => _childrenVisibleInViewport;
+    private set
+    {
+      Debug.Assert(!IsLeaf, "Must not be called on leafs.");
+      if (_childrenVisibleInViewport == value)
+      {
+        return;
+      }
+
+      var oldValue = _childrenVisibleInViewport;
+      _childrenVisibleInViewport = value;
+
+      Debug.Assert(_childrenVisibleInViewport >= 0, "Must not ever become negative.");
+      Debug.Assert(_childrenVisibleInViewport <= Children.Count);
+
+      if (Parent == null)
+      {
+        return;
+      }
+
+      if (value <= 0 && oldValue > 0)
+      {
+        // If value becomes 0: No more children of the parent are in the viewport, hence notify
+        // its parent as well that it is now no longer part of the viewport nodes.
+        Parent.ChildrenVisibleInViewport--;
+      }
+      else if (value > 0 && oldValue <= 0)
+      {
+        // If value becomes > 0: No children of the parent have been tracked before, hence
+        // notify its parent as well that it is now part of the viewport nodes.
+        Parent.ChildrenVisibleInViewport++;
+      }
+    }
+  }
+
+  internal bool IsVisibleInViewport
+  {
+    get => _isVisibleInViewport;
+    set
+    {
+      Debug.Assert(IsLeaf, "Must not be called on non-leafs.");
+      if (_isVisibleInViewport == value)
+      {
+        return;
+      }
+
+      _isVisibleInViewport = value;
+      Parent?.ChildrenVisibleInViewport += value ? 1 : -1;
+    }
+  }
+
   internal void AddChildDirect(RTreeNode<T> child)
   {
     Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
     _children.Add(child);
     child.Parent = this;
     UpdateBoundaryIncremental(child);
+
+    if (child._isVisibleInViewport || child._childrenVisibleInViewport > 0)
+    {
+      ChildrenVisibleInViewport++;
+    }
   }
 
   internal void AddChildrenDirect(Span<RTreeNode<T>> children)
@@ -81,6 +140,11 @@ internal class RTreeNode<T>
       _children.Add(child);
       child.Parent = this;
       UpdateBoundaryIncremental(child);
+
+      if (child._isVisibleInViewport || child._childrenVisibleInViewport > 0)
+      {
+        ChildrenVisibleInViewport++;
+      }
     }
   }
 
@@ -95,6 +159,11 @@ internal class RTreeNode<T>
 
     child.Parent = null;
     UpdateBoundary();
+
+    if (child._isVisibleInViewport || child._childrenVisibleInViewport > 0)
+    {
+      ChildrenVisibleInViewport--;
+    }
   }
 
   internal RTreeNode<T> InsertParentLayer(int maxEntriesPerNode)
@@ -111,20 +180,15 @@ internal class RTreeNode<T>
 
     newParent._children!.Add(this);
     Parent = newParent;
-    return newParent;
-  }
 
-  internal void ClearChildren()
-  {
-    Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
-    for (var index = _children.Count - 1; index >= 0; index--)
+    if (_isVisibleInViewport || _childrenVisibleInViewport > 0)
     {
-      var child = _children[index];
-      child.Parent = null;
-      _children.RemoveAt(index);
+      // Setting the field directly, because nothing changed for the
+      // parent of newParent, which would be checked by the property setter.
+      newParent._childrenVisibleInViewport = 1;
     }
 
-    Boundary = new RTreeBoundary();
+    return newParent;
   }
 
   internal RTreeNode<T>? SplitAndGetCutoffBranch()
@@ -181,6 +245,11 @@ internal class RTreeNode<T>
     // Remove only the second seed node, add it to a new detached parent:
     _children.RemoveAt(cutoffSeedIndex);
 
+    if (cutoffSeed._isVisibleInViewport || cutoffSeed._childrenVisibleInViewport > 0)
+    {
+      ChildrenVisibleInViewport--;
+    }
+
     var cutoffBranch = CreateNonLeaf(_maxEntries);
     cutoffBranch.AddChildDirect(cutoffSeed);
 
@@ -206,10 +275,17 @@ internal class RTreeNode<T>
       var secondDiffY = cutoffSeedY - centerY;
       var cutoffSeedDistanceSquared = secondDiffX * secondDiffX + secondDiffY * secondDiffY;
 
-      if (cutoffSeedDistanceSquared < keptSeedDistanceSquared)
+      if (cutoffSeedDistanceSquared >= keptSeedDistanceSquared)
       {
-        cutoffBranch.AddChildDirect(child);
-        _children.RemoveAt(index);
+        continue;
+      }
+
+      cutoffBranch.AddChildDirect(child);
+      _children.RemoveAt(index);
+
+      if (child._isVisibleInViewport || child._childrenVisibleInViewport > 0)
+      {
+        ChildrenVisibleInViewport--;
       }
     }
 
@@ -227,10 +303,16 @@ internal class RTreeNode<T>
       return cutoffBranch;
     }
 
-    // The parent still has capacity left, so add it directly there.
+    // The parent still has capacity left, so add the cutoffBranch directly there.
     // The boundary of the parent hasn't changed either, so directly linking is fine.
     Parent._children!.Add(cutoffBranch);
     cutoffBranch.Parent = Parent;
+
+    if (cutoffBranch._isVisibleInViewport || cutoffBranch._childrenVisibleInViewport > 0)
+    {
+      Parent.ChildrenVisibleInViewport++;
+    }
+
     return null;
   }
 
