@@ -402,37 +402,10 @@ public class RTree<T>
       AddNewIntersectingViewportItems(_actualViewport, item);
     }
 
-    var cutoffBranches = RebalanceAncestorNodes(targetNode);
-    if (cutoffBranches == null || cutoffBranches.Count == 0)
-    {
-      return;
-    }
-
-    // Note: As every InsertNode call will cause the current node path to the root to be rebalanced, the amount
-    //       of cutoff branches should be low.
-    //       Worst case: a bulk insert was done for initialization, with exactly the amount and distribution of
-    //       children to cause many top level nodes to be full. In this case, the "else" block below may insert more
-    //       items than chosen for the capacity into the newRoot. However, this should be rare and after further
-    //       inserts, the tree will rebalance itself again.
-
-    RTreeNode<T> newRoot;
-    if (Root.RemainingCapacity >= cutoffBranches.Count)
-    {
-      newRoot = Root;
-    }
-    else
-    {
-      newRoot = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
-      newRoot.AddChildDirect(Root);
-    }
-
-    for (var index = 0; index < cutoffBranches.Count; index++)
-    {
-      var node = cutoffBranches[index];
-      newRoot.AddChildDirect(node);
-    }
-
-    Root = newRoot;
+    // Note: Classical RTree implementations would now check if the node is overfull, split it if necessary and
+    // start to rebalance the tree. This is not necessary in this implementation, as unlike a classical RTree,
+    // it can work with leaf nodes on multiple depth layers and inserts parent layers on demand.
+    // Here, nodes can never become overfull.
   }
 
   private bool RemoveNode(RTreeNode<T> toRemove)
@@ -603,36 +576,6 @@ public class RTree<T>
 
       nodes = CollectionsMarshal.AsSpan(parentNodes);
     }
-  }
-
-  private List<RTreeNode<T>>? RebalanceAncestorNodes(RTreeNode<T> node)
-  {
-    Debug.Assert(!node.IsLeaf, "Must not be called on data leafs.");
-    List<RTreeNode<T>>? cutoffBranches = null;
-
-    while (true)
-    {
-      var parent = node.Parent;
-      if (parent == null)
-      {
-        Debug.Assert(node == Root, "This would only be possible if this method is invoked for a detached node.");
-        break;
-      }
-
-      if (node.IsOverFull)
-      {
-        var cutoffBranch = node.SplitAndGetCutoffBranch();
-        if (cutoffBranch != null)
-        {
-          cutoffBranches ??= [];
-          cutoffBranches.Add(cutoffBranch);
-        }
-      }
-
-      node = parent;
-    }
-
-    return cutoffBranches;
   }
 
   private void UpdateViewportItems(RTreeBoundary oldViewport, RTreeBoundary newViewport)

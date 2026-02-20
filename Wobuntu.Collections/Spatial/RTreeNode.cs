@@ -129,6 +129,8 @@ internal class RTreeNode<T>
     {
       ChildrenVisibleInViewport++;
     }
+
+    Debug.Assert(!IsOverFull); // It should not be possible in this implementation to exceed _maxEntries.
   }
 
   internal void AddChildrenDirect(Span<RTreeNode<T>> children)
