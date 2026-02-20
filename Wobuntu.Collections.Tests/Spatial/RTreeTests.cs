@@ -681,7 +681,7 @@ public class RTreeTests
     Assert.False(layer13.IsLeaf);
 
     Assert.Equal(1, layer11.Data);
-    Assert.Equal(layer22, layer11); // No new node created, instead moved
+    Assert.Same(layer22, layer11); // No new node created, instead moved
 
     // Assert: Removal of a node with more than one item, will also properly move its children up:
     //         Root has 1 slot free, layer12 has 2 children after the remove below, by replacing itself

@@ -39,7 +39,7 @@ internal class RTreeNode<T>
 
     _maxEntries = maxEntries;
     _minEntries = RTreeOptions.DeriveMinEntriesFromMaxEntriesPerNode(maxEntries);
-    _children = new List<RTreeNode<T>>(_maxEntries + 1); // +1 to avoid early reallocation when capacity is met.
+    _children = new List<RTreeNode<T>>(_maxEntries);
   }
 
   internal static RTreeNode<T> CreateLeaf(T data, RTreeBoundary boundary) => new(data, boundary);
@@ -130,7 +130,7 @@ internal class RTreeNode<T>
       ChildrenVisibleInViewport++;
     }
 
-    Debug.Assert(!IsOverFull); // It should not be possible in this implementation to exceed _maxEntries.
+    Debug.Assert(!IsOverFull, "This implementation must not create overfull nodes.");
   }
 
   internal void AddChildrenDirect(Span<RTreeNode<T>> children)
@@ -148,17 +148,29 @@ internal class RTreeNode<T>
         ChildrenVisibleInViewport++;
       }
     }
+
+    Debug.Assert(!IsOverFull, "This implementation must not create overfull nodes.");
   }
 
   internal void RemoveChildDirect(RTreeNode<T> child)
   {
     Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
-    if (child.Parent != this || !_children.Remove(child))
+
+    var index = _children.IndexOf(child);
+    if (child.Parent != this || index < 0)
     {
       Debug.Fail("Should not be possible.");
       return;
     }
 
+    // Swap with the last element before removing to avoid O(n) shifting.
+    var lastIndex = _children.Count - 1;
+    if (index != lastIndex)
+    {
+      _children[index] = _children[lastIndex];
+    }
+
+    _children.RemoveAt(lastIndex);
     child.Parent = null;
     UpdateBoundary();
 
@@ -191,131 +203,6 @@ internal class RTreeNode<T>
     }
 
     return newParent;
-  }
-
-  internal RTreeNode<T>? SplitAndGetCutoffBranch()
-  {
-    Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
-    Debug.Assert(IsOverFull, "Should not be called on nodes which are not yet full.");
-    Debug.Assert(_children.Count >= 2, "Must not be called on nodes with less than two children.");
-
-    var keptSeedIndex = -1;
-    var cutoffSeedIndex = -1;
-    RTreeNode<T> cutoffSeed = null!;
-    var maxDistanceSquared = -1d;
-    var keptSeedX = 0d;
-    var keptSeedY = 0d;
-    var cutoffSeedX = 0d;
-    var cutoffSeedY = 0d;
-
-    // First search for the 2 most distant nodes, which will be used as the base for arranging the split.
-    for (var outerIndex = 0; outerIndex < _children.Count - 1; outerIndex++)
-    {
-      var outerChild = _children[outerIndex];
-      var outerCenterX = outerChild.Boundary.CenterX;
-      var outerCenterY = outerChild.Boundary.CenterY;
-
-      for (var innerIndex = outerIndex + 1; innerIndex < _children.Count; innerIndex++)
-      {
-        var innerChild = _children[innerIndex];
-        var innerCenterX = innerChild.Boundary.CenterX;
-        var innerCenterY = innerChild.Boundary.CenterY;
-
-        var diffX = innerCenterX - outerCenterX;
-        var diffY = innerCenterY - outerCenterY;
-
-        var distanceSquared = diffX * diffX + diffY * diffY;
-
-        if (distanceSquared <= maxDistanceSquared)
-        {
-          continue;
-        }
-
-        maxDistanceSquared = distanceSquared;
-
-        keptSeedIndex = outerIndex;
-        keptSeedX = outerCenterX;
-        keptSeedY = outerCenterY;
-
-        cutoffSeedIndex = innerIndex;
-        cutoffSeed = innerChild;
-        cutoffSeedX = innerCenterX;
-        cutoffSeedY = innerCenterY;
-      }
-    }
-
-    // Remove only the second seed node, add it to a new detached parent:
-    _children.RemoveAt(cutoffSeedIndex);
-
-    if (cutoffSeed._isVisibleInViewport || cutoffSeed._childrenVisibleInViewport > 0)
-    {
-      ChildrenVisibleInViewport--;
-    }
-
-    var cutoffBranch = CreateNonLeaf(_maxEntries);
-    cutoffBranch.AddChildDirect(cutoffSeed);
-
-    // Foreach of the remaining nodes, add them either to the first or second group based again on the
-    // distance to the seed nodes. We are not using the distance from the center of the currently populated
-    // parent nodes, as this could lead to unwanted clustering due to a moved center point on every add.
-    for (var index = _children.Count - 1; index >= 0; index--)
-    {
-      if (index == keptSeedIndex)
-      {
-        continue;
-      }
-
-      var child = _children[index];
-      var centerX = child.Boundary.CenterX;
-      var centerY = child.Boundary.CenterY;
-
-      var firstDiffX = keptSeedX - centerX;
-      var firstDiffY = keptSeedY - centerY;
-      var keptSeedDistanceSquared = firstDiffX * firstDiffX + firstDiffY * firstDiffY;
-
-      var secondDiffX = cutoffSeedX - centerX;
-      var secondDiffY = cutoffSeedY - centerY;
-      var cutoffSeedDistanceSquared = secondDiffX * secondDiffX + secondDiffY * secondDiffY;
-
-      if (cutoffSeedDistanceSquared >= keptSeedDistanceSquared)
-      {
-        continue;
-      }
-
-      cutoffBranch.AddChildDirect(child);
-      _children.RemoveAt(index);
-
-      if (child._isVisibleInViewport || child._childrenVisibleInViewport > 0)
-      {
-        ChildrenVisibleInViewport--;
-      }
-    }
-
-    // As we removed child nodes, our own boundary changed and needs an update.
-    UpdateBoundary();
-
-    if (Parent is null)
-    {
-      return cutoffBranch;
-    }
-
-    if (Parent.RemainingCapacity <= 0)
-    {
-      Parent.UpdateBoundary();
-      return cutoffBranch;
-    }
-
-    // The parent still has capacity left, so add the cutoffBranch directly there.
-    // The boundary of the parent hasn't changed either, so directly linking is fine.
-    Parent._children!.Add(cutoffBranch);
-    cutoffBranch.Parent = Parent;
-
-    if (cutoffBranch._isVisibleInViewport || cutoffBranch._childrenVisibleInViewport > 0)
-    {
-      Parent.ChildrenVisibleInViewport++;
-    }
-
-    return null;
   }
 
   private void UpdateBoundary()

@@ -45,6 +45,14 @@ public class RTree<T>
   private const int DefaultQueryResultMinCapacity = 64;
   private const int DefaultQueryStackMinCapacity = 64;
 
+  // Cached delegates to avoid a heap allocation per Sort call in BuildSortTileRecursiveTree.
+  // Static lambdas on a generic class are per-instantiation, which is exactly what we need here.
+  private static readonly Comparison<RTreeNode<T>> CompareByCenterX =
+    static (left, right) => left.Boundary.CenterX.CompareTo(right.Boundary.CenterX);
+
+  private static readonly Comparison<RTreeNode<T>> CompareByCenterY =
+    static (left, right) => left.Boundary.CenterY.CompareTo(right.Boundary.CenterY);
+
   private readonly Stack<RTreeNode<T>> _queryStack;
 
   private readonly Dictionary<T, RTreeNode<T>> _itemToNode;
@@ -135,30 +143,51 @@ public class RTree<T>
 
   public IReadOnlyCollection<T> ViewportItems => _viewportItems;
 
-  public void Add(T item)
+  public bool Add(T item)
   {
-    ArgumentNullException.ThrowIfNull(item);
+    if (item == null!)
+    {
+      return false;
+    }
 
     var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
-    _itemToNode[item] = node;
+    if (!_itemToNode.TryAdd(item, node))
+    {
+      return false;
+    }
+
     InsertNode(node);
+    return true;
   }
 
-  public void AddRange(Span<T> items)
+  public int AddRange(Span<T> items)
   {
     if (Count == 0 && items.Length > _maxEntriesPerNode)
     {
-      BulkInitialize(items);
-      return;
+      return BulkInitialize(items);
     }
 
+    var previousCount = _itemToNode.Count;
     for (var index = 0; index < items.Length; index++)
     {
       var item = items[index];
+
+      if (item == null!)
+      {
+        continue;
+      }
+
       var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
-      _itemToNode[item] = node;
+
+      if (!_itemToNode.TryAdd(item, node))
+      {
+        continue;
+      }
+
       InsertNode(node);
     }
+
+    return _itemToNode.Count - previousCount;
   }
 
   public bool Remove(T item)
@@ -438,7 +467,7 @@ public class RTree<T>
       return true;
     }
 
-    if (parent.Children.Count + toRemove.Children.Count < _maxEntriesPerNode)
+    if (parent.RemainingCapacity >= toRemove.Children.Count)
     {
       for (var index = 0; index < toRemove.Children.Count; index++)
       {
@@ -452,7 +481,14 @@ public class RTree<T>
     for (var index = 0; index < toRemove.Children.Count; index++)
     {
       var child = toRemove.Children[index];
-      InsertNode(child);
+      if (parent.RemainingCapacity > 0)
+      {
+        parent.AddChildDirect(child);
+      }
+      else
+      {
+        InsertNode(child);
+      }
     }
 
     RemoveUnderfullFromAncestorNodes(parent);
@@ -469,7 +505,7 @@ public class RTree<T>
 
       parent.RemoveChildDirect(current); // This could cause the parent to become underfull as well, hence the loop.
 
-      if (parent.Children.Count + current.Children.Count < _maxEntriesPerNode)
+      if (parent.RemainingCapacity >= current.Children.Count)
       {
         for (var index = 0; index < current.Children.Count; index++)
         {
@@ -482,7 +518,14 @@ public class RTree<T>
         for (var index = 0; index < current.Children.Count; index++)
         {
           var child = current.Children[index];
-          InsertNode(child);
+          if (parent.RemainingCapacity > 0)
+          {
+            parent.AddChildDirect(child);
+          }
+          else
+          {
+            InsertNode(child);
+          }
         }
       }
 
@@ -490,26 +533,41 @@ public class RTree<T>
     }
   }
 
-  private void BulkInitialize(Span<T> items)
+  private int BulkInitialize(Span<T> items)
   {
     if (items.Length == 0)
     {
-      return;
+      return 0;
     }
 
     var array = ArrayPool<RTreeNode<T>>.Shared.Rent(items.Length);
 
     try
     {
+      var skipped = 0;
       for (var index = 0; index < items.Length; index++)
       {
         var item = items[index];
+        if (item == null!)
+        {
+          skipped++;
+          continue;
+        }
+
         var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
-        _itemToNode[item] = node;
-        array[index] = node;
+
+        if (!_itemToNode.TryAdd(item, node))
+        {
+          skipped++;
+          continue;
+        }
+
+        array[index - skipped] = node;
       }
 
-      Root = BuildSortTileRecursiveTree(array.AsSpan()[..items.Length]);
+      var length = items.Length - skipped;
+      Root = BuildSortTileRecursiveTree(array.AsSpan()[..length]);
+      return length;
     }
     finally
     {
@@ -556,13 +614,13 @@ public class RTree<T>
       var sliceCount = (int)Math.Ceiling(Math.Sqrt(parentNodeCount));
       var sliceSize = (int)Math.Ceiling((double)nodes.Length / sliceCount);
 
-      nodes.Sort((left, right) => left.Boundary.CenterX.CompareTo(right.Boundary.CenterX));
-      var parentNodes = new List<RTreeNode<T>>(sliceCount);
+      nodes.Sort(CompareByCenterX);
+      var parentNodes = new List<RTreeNode<T>>(parentNodeCount);
 
       for (var nodeIndex = 0; nodeIndex < nodes.Length; nodeIndex += sliceSize)
       {
         var slice = nodes.Slice(nodeIndex, Math.Min(sliceSize, nodes.Length - nodeIndex));
-        slice.Sort((first, second) => first.Boundary.CenterY.CompareTo(second.Boundary.CenterY));
+        slice.Sort(CompareByCenterY);
 
         for (var sliceIndex = 0; sliceIndex < slice.Length; sliceIndex += _maxEntriesPerNode)
         {
@@ -694,8 +752,8 @@ public class RTree<T>
 
         if (current.Boundary.Intersects(viewport))
         {
-          // Not yet part of viewport items, but as adding/removing is done in batches and separate methods,
-          // this node may just not yet have been added by the other method.
+          // Not yet part of viewport items, but as adding/removing is done in separate methods,
+          // this node may just not yet have been added by the AddNewIntersectingViewportItems method.
           continue;
         }
 

@@ -48,21 +48,12 @@ public class RTreeNodeTests
   }
 
   [Fact]
-  public void CreateNonLeaf_MaxEntriesSet_CapacityIsMaxPlus1()
+  public void CreateNonLeaf_MaxEntriesSet_CapacityIsMax()
   {
     var node = RTreeNode<Guid>.CreateNonLeaf(16);
     var capacity = ((List<RTreeNode<Guid>>)node.Children!).Capacity;
-    Assert.Equal(17, capacity);
+    Assert.Equal(16, capacity);
     Assert.Equal(16, node.RemainingCapacity);
-  }
-
-  [Fact]
-  public void CreateNonLeaf_ZeroForMaxEntries_MinCapacityCapped()
-  {
-    var node = RTreeNode<Guid>.CreateNonLeaf(2);
-    var capacity = ((List<RTreeNode<Guid>>)node.Children!).Capacity;
-    Assert.Equal(RTreeOptions.MinEntriesPerNodeMinimum + 1, capacity);
-    Assert.Equal(RTreeOptions.MinEntriesPerNodeMinimum, node.RemainingCapacity);
   }
 
   [Fact]
@@ -109,18 +100,10 @@ public class RTreeNodeTests
   }
 
   [Fact]
-  public void RemainingCapacity_WithCustomCapacity_CountedCorrectlyNeverNegative()
+  public void RemainingCapacity_WithCustomCapacity_CountedCorrectly()
   {
     // Arrange
     const int capacity = 16;
-
-    var exceedingCapacity = RTreeNode<string>.CreateNonLeaf(capacity);
-    var exceedingChildren = Enumerable.Range(0, capacity + 1)
-      .Select(x => RTreeNode<string>.CreateLeaf("Test" + x, new RTreeBoundary()))
-      .ToArray();
-
-    exceedingCapacity.AddChildrenDirect(exceedingChildren.AsSpan());
-
     var filledUp = RTreeNode<string>.CreateNonLeaf(capacity);
 
     // Act/Assert
@@ -132,8 +115,6 @@ public class RTreeNodeTests
 
     Assert.Equal(0, filledUp.RemainingCapacity);
     Assert.Equal(capacity, filledUp.Children!.Count);
-    Assert.Equal(0, exceedingCapacity.RemainingCapacity);
-    Assert.Equal(capacity + 1, exceedingCapacity.Children!.Count);
   }
 
   [Fact]

@@ -210,10 +210,10 @@ public class RTreeBoundaryTests
     var result = first.Union(second);
 
     // Assert
-    Assert.Equal(result.X, rx);
-    Assert.Equal(result.Y, ry);
-    Assert.Equal(result.Width, rw);
-    Assert.Equal(result.Height, rh);
+    Assert.Equal(rx, result.X);
+    Assert.Equal(ry, result.Y);
+    Assert.Equal(rw, result.Width);
+    Assert.Equal(rh, result.Height);
   }
 
   [Fact]

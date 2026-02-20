@@ -10,7 +10,7 @@ namespace Wobuntu.Collections.Spatial;
 // However, this immutable struct was created on purpose as it provides some optimizations for its usage in RTree.
 
 public readonly struct RTreeBoundary
-  : IEquatable<RTreeBoundary>
+  : IEquatable<RTreeBoundary>, IFormattable
 {
   public readonly double X;
   public readonly double Y;
