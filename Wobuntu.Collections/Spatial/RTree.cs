@@ -60,6 +60,7 @@ public class RTree<T>
   private readonly Func<T, RTreeBoundary> _boundarySelector;
   private readonly int _maxEntriesPerNode;
   private readonly double _updateViewportItemsOnShrinkThreshold;
+  private readonly double _leafNodeVirtualFullness;
 
   private RTreeBoundary _viewport;
   private RTreeBoundary _actualViewport;
@@ -83,6 +84,12 @@ public class RTree<T>
     _boundarySelector = boundarySelector;
     _maxEntriesPerNode = options.MaxEntriesPerNode;
     _updateViewportItemsOnShrinkThreshold = options.UpdateViewportItemsOnShrinkThreshold;
+
+    // The following will choose a virtual fullness of leaf nodes, somewhere between the minimum and maximum amount
+    // of nodes. This will make choosing a node for dynamic insert (= not during bulk initialize) fairer. If we treated
+    // leaf nodes as being empty, they would always be picked if on the same level as non-leaf nodes for insert, which
+    // would cause massive overlaps of RTreeNodes.
+    _leafNodeVirtualFullness = (_maxEntriesPerNode - options.MinEntriesPerNode) / (double)_maxEntriesPerNode;
 
     _itemToNode = new Dictionary<T, RTreeNode<T>>();
     _queryStack = new Stack<RTreeNode<T>>(DefaultQueryStackMinCapacity);
@@ -357,23 +364,26 @@ public class RTree<T>
     var node = Root;
     if (node.RemainingCapacity > 0)
     {
+      // If the root has capacity, always insert into it.
       return node;
     }
 
     var (centerX, centerY) = (itemBoundary.CenterX, itemBoundary.CenterY);
 
     // Iterate over all children of the current node, find the best one, then repeat using the selected node again.
-    // Do so, until the best matching leaf is found. Its parent will be the insert node if it has capacity, otherwise
-    // insert a new layer into which the new value can be inserted.
+    // Do so, until the best candidate for insert is found.
+    var bestCandidate = node;
+    var totalMinDistance = double.MaxValue;
+
     while (true)
     {
       if (node.IsLeaf)
       {
-        return node;
+        break;
       }
 
       RTreeNode<T>? closestChild = null;
-      var minDistance = double.MaxValue;
+      var currentMinDistance = double.MaxValue;
 
       for (var index = 0; index < node.Children.Count; index++)
       {
@@ -385,13 +395,19 @@ public class RTree<T>
         var diffY = centerY - childY;
 
         var distanceSquared = diffX * diffX + diffY * diffY;
-        if (distanceSquared > minDistance)
-        {
-          continue;
-        }
+        var fullness = child.IsLeaf ? _leafNodeVirtualFullness : (float)child.Children.Count / _maxEntriesPerNode;
+        // The non-linear penalty factor for fullness of nodes below causes better distribution of leafs across
+        // branches. If we would not take this into account, inserting new nodes at a similar location would
+        // form single but very deep branches, as always just the nearest is selected and a new parent would be
+        // inserted.
+        var penalty = 1 + fullness * fullness;
+        var weightedDistance = (distanceSquared + double.Epsilon) * penalty; // Epsilon: Handle 0 distance edge case
 
-        minDistance = distanceSquared;
-        closestChild = child;
+        if (weightedDistance < currentMinDistance)
+        {
+          currentMinDistance = weightedDistance;
+          closestChild = child;
+        }
       }
 
       if (closestChild == null)
@@ -399,11 +415,25 @@ public class RTree<T>
         Debug.Fail("It should always be possible to select a node for insertion, could only happen if a node without "
                    + "any children was found, which should be impossible for IsLeaf = false (except for Root, which"
                    + " also should not reach this.");
-        return node;
+        continue;
+      }
+
+      if (closestChild.RemainingCapacity > 0)
+      {
+        // Insert early, don't iterate down the bottom.
+        return closestChild;
+      }
+
+      if (currentMinDistance < totalMinDistance)
+      {
+        totalMinDistance = currentMinDistance;
+        bestCandidate = closestChild;
       }
 
       node = closestChild;
     }
+
+    return bestCandidate;
   }
 
   private void InsertNode(RTreeNode<T> item)
@@ -422,6 +452,12 @@ public class RTree<T>
           ? targetNode.Parent
           : targetNode.InsertParentLayer(_maxEntriesPerNode);
       }
+    }
+    else if (targetNode != Root)
+    {
+      Debug.Assert(
+        targetNode.RemainingCapacity > 0,
+        "ChooseInsertParent should have returned a node with capacity available.");
     }
 
     targetNode.AddChildDirect(item);

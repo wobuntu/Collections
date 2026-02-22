@@ -9,6 +9,8 @@ public class RTreeOptions
   public const int DefaultMaxEntriesPerNode = 12;
   public const int MinEntriesPerNodeMinimum = 2;
 
+  internal const float MinEntriesRatio = 0.4f;
+
   private readonly int _maxEntriesPerNode = DefaultMaxEntriesPerNode;
   private readonly double _updateViewportItemsOnShrinkThreshold = .3;
 
@@ -56,9 +58,7 @@ public class RTreeOptions
       maxEntries = MinEntriesPerNodeMinimum;
     }
 
-    const float minEntriesRatio = 0.4f;
-    var minEntries = Math.Max(MinEntriesPerNodeMinimum, (int)(maxEntries * minEntriesRatio));
-
+    var minEntries = Math.Max(MinEntriesPerNodeMinimum, (int)(maxEntries * MinEntriesRatio));
     return minEntries;
   }
 }
