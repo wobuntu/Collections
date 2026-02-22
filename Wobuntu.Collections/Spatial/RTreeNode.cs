@@ -50,7 +50,7 @@ internal class RTreeNode<T>
   [MemberNotNullWhen(false, nameof(_children), nameof(Children))]
   internal bool IsLeaf { get; }
 
-  internal IReadOnlyList<RTreeNode<T>>? Children => _children;
+  internal List<RTreeNode<T>>? Children => _children;
 
   internal int RemainingCapacity => IsLeaf ? 0 : Math.Max(_maxEntries - _children.Count, 0);
 

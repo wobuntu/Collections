@@ -662,33 +662,16 @@ public class RTree<T>
 
   private void RebalanceBranch(RTreeNode<T> branchRoot)
   {
-    Debug.Assert(_queryStack.Count == 0);
     Debug.Assert(!branchRoot.IsLeaf, "Must not be called on data leafs.");
 
-    for (var index = 0; index < branchRoot.Children.Count; index++)
-    {
-      var child = branchRoot.Children[index];
-      _queryStack.Push(child);
-    }
+    // Only collect direct children — do NOT recurse into sub-branches.
+    // Recursing would make each rebalance O(subtree size), causing O(n^2) total cost on sequential inserts.
+    var originalChildren = branchRoot.Children;
+    var originalLength = originalChildren.Count;
+    var nodes = ArrayPool<RTreeNode<T>>.Shared.Rent(originalLength);
 
-    var nodes = new List<RTreeNode<T>>(_maxEntriesPerNode);
-    while (_queryStack.TryPop(out var current))
-    {
-      if (current.IsLeaf)
-      {
-        current.Parent = null;
-        nodes.Add(current);
-        continue;
-      }
-
-      for (var index = 0; index < current.Children.Count; index++)
-      {
-        var child = current.Children[index];
-        _queryStack.Push(child);
-      }
-
-      RecycleNode(current);
-    }
+    var originalAsSpan = CollectionsMarshal.AsSpan(originalChildren);
+    originalAsSpan.CopyTo(nodes);
 
     // For restoring the parent relationship after Reset().
     var parent = branchRoot.Parent;
@@ -700,8 +683,7 @@ public class RTree<T>
     branchRoot.Reset();
     branchRoot.Parent = parent;
 
-    var asSpan = CollectionsMarshal.AsSpan(nodes);
-    BuildSortTileRecursiveTree(branchRoot, asSpan);
+    BuildSortTileRecursiveTree(branchRoot, nodes);
   }
 
   private void BuildSortTileRecursiveTree(RTreeNode<T> root, Span<RTreeNode<T>> nodes)
