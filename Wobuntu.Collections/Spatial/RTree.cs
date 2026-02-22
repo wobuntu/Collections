@@ -669,9 +669,10 @@ public class RTree<T>
     var originalChildren = branchRoot.Children;
     var originalLength = originalChildren.Count;
     var nodes = ArrayPool<RTreeNode<T>>.Shared.Rent(originalLength);
+    var nodesAsSpan = nodes.AsSpan(0, originalLength);
 
     var originalAsSpan = CollectionsMarshal.AsSpan(originalChildren);
-    originalAsSpan.CopyTo(nodes);
+    originalAsSpan.CopyTo(nodesAsSpan);
 
     // For restoring the parent relationship after Reset().
     var parent = branchRoot.Parent;
@@ -683,7 +684,8 @@ public class RTree<T>
     branchRoot.Reset();
     branchRoot.Parent = parent;
 
-    BuildSortTileRecursiveTree(branchRoot, nodes);
+    BuildSortTileRecursiveTree(branchRoot, nodesAsSpan);
+    ArrayPool<RTreeNode<T>>.Shared.Return(nodes, true);
   }
 
   private void BuildSortTileRecursiveTree(RTreeNode<T> root, Span<RTreeNode<T>> nodes)
