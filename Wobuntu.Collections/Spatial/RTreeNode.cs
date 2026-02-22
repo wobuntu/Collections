@@ -68,7 +68,7 @@ internal class RTreeNode<T>
   internal int ChildrenVisibleInViewport
   {
     get => _childrenVisibleInViewport;
-    private set
+    set
     {
       Debug.Assert(!IsLeaf, "Must not be called on leafs.");
       if (_childrenVisibleInViewport == value)
@@ -203,6 +203,22 @@ internal class RTreeNode<T>
     }
 
     return newParent;
+  }
+
+  internal void Reset()
+  {
+    Parent = null;
+    Boundary = new RTreeBoundary();
+
+    if (IsLeaf)
+    {
+      _isVisibleInViewport = false;
+      Data = default;
+      return;
+    }
+
+    _childrenVisibleInViewport = 0;
+    _children.Clear();
   }
 
   private void UpdateBoundary()

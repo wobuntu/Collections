@@ -57,6 +57,9 @@ public class RTree<T>
 
   private readonly Dictionary<T, RTreeNode<T>> _itemToNode;
 
+  private List<RTreeNode<T>>? _recycledLeafNodes;
+  private List<RTreeNode<T>>? _recycledNonLeafNodes;
+
   private readonly Func<T, RTreeBoundary> _boundarySelector;
   private readonly int _maxEntriesPerNode;
   private readonly double _updateViewportItemsOnShrinkThreshold;
@@ -157,7 +160,7 @@ public class RTree<T>
       return false;
     }
 
-    var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
+    var node = CreateLeaf(item, _boundarySelector(item));
     if (!_itemToNode.TryAdd(item, node))
     {
       return false;
@@ -184,7 +187,7 @@ public class RTree<T>
         continue;
       }
 
-      var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
+      var node = CreateLeaf(item, _boundarySelector(item));
 
       if (!_itemToNode.TryAdd(item, node))
       {
@@ -208,7 +211,13 @@ public class RTree<T>
     {
       _viewportItems.Remove(node.Data!);
       _itemToNode.Remove(item);
-      Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
+
+      var oldRoot = Root;
+      Root = CreateNonLeaf();
+
+      oldRoot.Reset();
+      _recycledNonLeafNodes ??= [];
+      _recycledNonLeafNodes.Add(oldRoot);
       return true;
     }
 
@@ -221,8 +230,13 @@ public class RTree<T>
 
     if (Root is { Children.Count: 1, IsLeaf: false })
     {
+      var oldRoot = Root;
       Root = Root.Children[0];
       Root.Parent = null;
+
+      oldRoot.Reset();
+      _recycledNonLeafNodes ??= [];
+      _recycledNonLeafNodes.Add(oldRoot);
     }
 
     return true;
@@ -242,7 +256,7 @@ public class RTree<T>
       {
         _viewportItems.Remove(node.Data!);
         _itemToNode.Remove(item);
-        Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
+        Root = CreateNonLeaf();
         continue;
       }
 
@@ -263,7 +277,8 @@ public class RTree<T>
 
   public void Clear()
   {
-    Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
+    // Note that items removed via Clear are not recycled, to not give up O(1) complexity for caching old
+    Root = CreateNonLeaf();
     _itemToNode.Clear();
     ResetViewportItems();
   }
@@ -448,9 +463,24 @@ public class RTree<T>
       }
       else
       {
-        targetNode = targetNode.Parent!.RemainingCapacity > 0
-          ? targetNode.Parent
-          : targetNode.InsertParentLayer(_maxEntriesPerNode);
+        var parent = targetNode.Parent!;
+        if (parent.RemainingCapacity > 0)
+        {
+          targetNode = parent;
+        }
+        else
+        {
+          RebalanceBranch(parent);
+
+          // After rebalancing, check for a more suitable candidate (e.g. a node which has only a few items)
+          targetNode = ChooseInsertParent(item.Boundary);
+          if (targetNode.IsLeaf)
+          {
+            // If a leaf is again returned, then most likely the same node had been returned and the parent of
+            // it has still no capacity. In this case, fall back to inserting a direct parent layer.
+            targetNode = targetNode.InsertParentLayer(_maxEntriesPerNode);
+          }
+        }
       }
     }
     else if (targetNode != Root)
@@ -500,6 +530,11 @@ public class RTree<T>
 
       parent = MoveChildrenToParentIfCapacityAvailable(parent);
       RemoveUnderfullFromAncestorNodes(parent);
+
+      toRemove.Reset();
+      _recycledLeafNodes ??= [];
+      _recycledLeafNodes.Add(toRemove);
+
       return true;
     }
 
@@ -510,6 +545,10 @@ public class RTree<T>
         var child = toRemove.Children[index];
         parent.AddChildDirect(child);
       }
+
+      toRemove.Reset();
+      _recycledNonLeafNodes ??= [];
+      _recycledNonLeafNodes.Add(toRemove);
 
       return true;
     }
@@ -526,6 +565,10 @@ public class RTree<T>
         InsertNode(child);
       }
     }
+
+    toRemove.Reset();
+    _recycledNonLeafNodes ??= [];
+    _recycledNonLeafNodes.Add(toRemove);
 
     RemoveUnderfullFromAncestorNodes(parent);
     return true;
@@ -565,6 +608,10 @@ public class RTree<T>
         }
       }
 
+      current.Reset();
+      _recycledNonLeafNodes ??= [];
+      _recycledNonLeafNodes.Add(current);
+
       current = parent;
     }
   }
@@ -590,7 +637,7 @@ public class RTree<T>
           continue;
         }
 
-        var node = RTreeNode<T>.CreateLeaf(item, _boundarySelector(item));
+        var node = CreateLeaf(item, _boundarySelector(item));
 
         if (!_itemToNode.TryAdd(item, node))
         {
@@ -601,8 +648,10 @@ public class RTree<T>
         array[index - skipped] = node;
       }
 
+      Root = CreateNonLeaf();
       var length = items.Length - skipped;
-      Root = BuildSortTileRecursiveTree(array.AsSpan()[..length]);
+      BuildSortTileRecursiveTree(Root, array.AsSpan()[..length]);
+
       return length;
     }
     finally
@@ -611,15 +660,61 @@ public class RTree<T>
     }
   }
 
-  private RTreeNode<T> BuildSortTileRecursiveTree(Span<RTreeNode<T>> nodes)
+  private void RebalanceBranch(RTreeNode<T> branchRoot)
   {
+    Debug.Assert(_queryStack.Count == 0);
+    Debug.Assert(!branchRoot.IsLeaf, "Must not be called on data leafs.");
+
+    for (var index = 0; index < branchRoot.Children.Count; index++)
+    {
+      var child = branchRoot.Children[index];
+      _queryStack.Push(child);
+    }
+
+    var nodes = new List<RTreeNode<T>>(_maxEntriesPerNode);
+    while (_queryStack.TryPop(out var current))
+    {
+      if (current.IsLeaf)
+      {
+        current.Parent = null;
+        nodes.Add(current);
+        continue;
+      }
+
+      for (var index = 0; index < current.Children.Count; index++)
+      {
+        var child = current.Children[index];
+        _queryStack.Push(child);
+      }
+
+      RecycleNode(current);
+    }
+
+    // For restoring the parent relationship after Reset().
+    var parent = branchRoot.Parent;
+
+    // Setting the property before Reset(), to notify the parent as well.
+    // The correct number will be restored by BuildSortTileRecursiveTree().
+    branchRoot.ChildrenVisibleInViewport = 0; 
+    
+    branchRoot.Reset();
+    branchRoot.Parent = parent;
+
+    var asSpan = CollectionsMarshal.AsSpan(nodes);
+    BuildSortTileRecursiveTree(branchRoot, asSpan);
+  }
+
+  private void BuildSortTileRecursiveTree(RTreeNode<T> root, Span<RTreeNode<T>> nodes)
+  {
+    Debug.Assert(!root.IsLeaf, "Must not be called on data leafs.");
+    Debug.Assert(root.Children.Count == 0, "The passed root must be empty.");
+
     while (true)
     {
-      if (nodes.Length <= _maxEntriesPerNode)
+      if (nodes.Length + 1 <= _maxEntriesPerNode) // +1 to ensure at least one extra item can fit (for rebalance).
       {
-        var root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
         root.AddChildrenDirect(nodes);
-        return root;
+        return;
       }
 
       // An attempt of explaining what is going on below with an example:
@@ -646,9 +741,10 @@ public class RTree<T>
       //     - Less than the maximum amount: create a root node, push them as children in there
       //     - Otherwise: Start over but use this time the created parent nodes to create parents for them
 
-      var parentNodeCount = (int)Math.Ceiling((double)nodes.Length / _maxEntriesPerNode);
+      double nodesLength = nodes.Length + 1; // Just to ensure at least one extra item can already fit (for rebalance).
+      var parentNodeCount = (int)Math.Ceiling(nodesLength / _maxEntriesPerNode);
       var sliceCount = (int)Math.Ceiling(Math.Sqrt(parentNodeCount));
-      var sliceSize = (int)Math.Ceiling((double)nodes.Length / sliceCount);
+      var sliceSize = (int)Math.Ceiling(nodesLength / sliceCount);
 
       nodes.Sort(CompareByCenterX);
       var parentNodes = new List<RTreeNode<T>>(parentNodeCount);
@@ -661,7 +757,7 @@ public class RTree<T>
         for (var sliceIndex = 0; sliceIndex < slice.Length; sliceIndex += _maxEntriesPerNode)
         {
           var sliceNodes = slice.Slice(sliceIndex, Math.Min(_maxEntriesPerNode, slice.Length - sliceIndex));
-          var sliceParent = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
+          var sliceParent = CreateNonLeaf();
 
           sliceParent.AddChildrenDirect(sliceNodes);
           parentNodes.Add(sliceParent);
@@ -884,7 +980,53 @@ public class RTree<T>
     }
   }
 
-  private static RTreeNode<T> MoveChildrenToParentIfCapacityAvailable(RTreeNode<T> node)
+  private void RecycleNode(RTreeNode<T> node)
+  {
+    node.Reset();
+    if (node.IsLeaf)
+    {
+      _recycledLeafNodes ??= [];
+      _recycledLeafNodes.Add(node);
+      return;
+    }
+
+    _recycledNonLeafNodes ??= [];
+    _recycledNonLeafNodes.Add(node);
+  }
+
+  private RTreeNode<T> CreateLeaf(T data, RTreeBoundary boundary)
+  {
+    if (_recycledLeafNodes == null || _recycledLeafNodes.Count == 0)
+    {
+      return RTreeNode<T>.CreateLeaf(data, boundary);
+    }
+
+    var index = _recycledLeafNodes.Count - 1;
+    var node = _recycledLeafNodes[index];
+    _recycledLeafNodes.RemoveAt(index);
+
+    node.Data = data;
+    node.Boundary = boundary;
+
+    return node;
+  }
+
+  private RTreeNode<T> CreateNonLeaf()
+  {
+    if (_recycledNonLeafNodes == null || _recycledNonLeafNodes.Count == 0)
+    {
+      return RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
+    }
+
+    var index = _recycledNonLeafNodes.Count - 1;
+    var node = _recycledNonLeafNodes[index];
+
+    _recycledNonLeafNodes.RemoveAt(index);
+
+    return node;
+  }
+
+  private RTreeNode<T> MoveChildrenToParentIfCapacityAvailable(RTreeNode<T> node)
   {
     Debug.Assert(!node.IsLeaf, "Must not be called on data leafs.");
 
@@ -906,6 +1048,10 @@ public class RTree<T>
       var child = node.Children[index];
       parent.AddChildDirect(child);
     }
+
+    node.Reset();
+    _recycledNonLeafNodes ??= [];
+    _recycledNonLeafNodes.Add(node);
 
     return parent;
   }
