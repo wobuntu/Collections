@@ -62,6 +62,7 @@ public class RTree<T>
 
   private readonly Func<T, RTreeBoundary> _boundarySelector;
   private readonly int _maxEntriesPerNode;
+  private readonly int _minEntriesPerNode;
   private readonly double _updateViewportItemsOnShrinkThreshold;
   private readonly double _leafNodeVirtualFullness;
 
@@ -86,13 +87,14 @@ public class RTree<T>
 
     _boundarySelector = boundarySelector;
     _maxEntriesPerNode = options.MaxEntriesPerNode;
+    _minEntriesPerNode = options.MinEntriesPerNode;
     _updateViewportItemsOnShrinkThreshold = options.UpdateViewportItemsOnShrinkThreshold;
 
     // The following will choose a virtual fullness of leaf nodes, somewhere between the minimum and maximum amount
     // of nodes. This will make choosing a node for dynamic insert (= not during bulk initialize) fairer. If we treated
     // leaf nodes as being empty, they would always be picked if on the same level as non-leaf nodes for insert, which
     // would cause massive overlaps of RTreeNodes.
-    _leafNodeVirtualFullness = (_maxEntriesPerNode - options.MinEntriesPerNode) / (double)_maxEntriesPerNode;
+    _leafNodeVirtualFullness = (_maxEntriesPerNode - _minEntriesPerNode) / (double)_maxEntriesPerNode;
 
     _itemToNode = new Dictionary<T, RTreeNode<T>>();
     _queryStack = new Stack<RTreeNode<T>>(DefaultQueryStackMinCapacity);
@@ -319,12 +321,13 @@ public class RTree<T>
         continue;
       }
 
-      for (var index = 0; index < current.Children.Count; index++)
+      var children = CollectionsMarshal.AsSpan(current.Children);
+      for (var index = 0; index < children.Length; index++)
       {
-        var child = current.Children[index];
+        var child = children[index];
         var childBoundary = child.Boundary;
 
-        if (searchBoundary.Contains(childBoundary))
+        if (searchBoundary.ContainsUnchecked(in childBoundary))
         {
           // In case of containment, add children directly without bound checks.
           var offset = _queryStack.Count;
@@ -340,17 +343,17 @@ public class RTree<T>
               continue;
             }
 
-            for (var containedIndex = 0; containedIndex < contained.Children.Count; containedIndex++)
+            var containedChildren = CollectionsMarshal.AsSpan(contained.Children);
+            for (var containedIndex = 0; containedIndex < containedChildren.Length; containedIndex++)
             {
-              var containedChild = contained.Children[containedIndex];
-              _queryStack.Push(containedChild);
+              _queryStack.Push(containedChildren[containedIndex]);
             }
           }
 
           continue;
         }
 
-        if (searchBoundary.Intersects(childBoundary))
+        if (searchBoundary.IntersectsUnchecked(in childBoundary))
         {
           _queryStack.Push(child);
         }
@@ -577,7 +580,8 @@ public class RTree<T>
   private void RemoveUnderfullFromAncestorNodes(RTreeNode<T> node)
   {
     var current = node;
-    while (current is { IsUnderFull: true, Parent: { } parent })
+    while (current is { Children: { } children, Parent: { } parent }
+           && children.Count < _minEntriesPerNode)
     {
       Debug.Assert(!current.IsLeaf);
       Debug.Assert(!parent.IsLeaf);
@@ -679,8 +683,8 @@ public class RTree<T>
 
     // Setting the property before Reset(), to notify the parent as well.
     // The correct number will be restored by BuildSortTileRecursiveTree().
-    branchRoot.ChildrenVisibleInViewport = 0; 
-    
+    branchRoot.ChildrenVisibleInViewport = 0;
+
     branchRoot.Reset();
     branchRoot.Parent = parent;
 
@@ -962,20 +966,6 @@ public class RTree<T>
         _queryStack.Push(child);
       }
     }
-  }
-
-  private void RecycleNode(RTreeNode<T> node)
-  {
-    node.Reset();
-    if (node.IsLeaf)
-    {
-      _recycledLeafNodes ??= [];
-      _recycledLeafNodes.Add(node);
-      return;
-    }
-
-    _recycledNonLeafNodes ??= [];
-    _recycledNonLeafNodes.Add(node);
   }
 
   private RTreeNode<T> CreateLeaf(T data, RTreeBoundary boundary)

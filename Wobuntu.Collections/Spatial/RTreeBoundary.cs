@@ -8,14 +8,17 @@ namespace Wobuntu.Collections.Spatial;
 
 // Note the similarity to a normal Rectangle.
 // However, this immutable struct was created on purpose as it provides some optimizations for its usage in RTree.
+// Benchmark if members added, as it is used in optimized hotpaths and falling out of cache lines may have a
+// noticeable impact on performance (also the reason for some common properties to be computed and not members).
 
 public readonly struct RTreeBoundary
   : IEquatable<RTreeBoundary>, IFormattable
 {
   public readonly double X;
   public readonly double Y;
-  public readonly double Width;
-  public readonly double Height;
+
+  public readonly double Right;
+  public readonly double Bottom;
 
   public RTreeBoundary(double x, double y, double width, double height)
   {
@@ -26,38 +29,47 @@ public readonly struct RTreeBoundary
 
     X = x;
     Y = y;
-    Width = width;
-    Height = height;
+    Right = x + width;
+    Bottom = y + height;
   }
 
-  public double Left => X;
-  public double Top => Y;
-  public double Right => X + Width;
-  public double Bottom => Y + Height;
-  public double CenterX => X + Width / 2;
-  public double CenterY => Y + Height / 2;
-  public double Area => Width * Height;
+  public double Width => Right - X;
+  public double Height => Bottom - Y;
+  public double CenterX => (X + Right) * .5;
+  public double CenterY => (Y + Bottom) * .5;
 
   public bool IsEmpty => Width <= 0 || Height <= 0;
 
   public bool Intersects(RTreeBoundary other) =>
     !IsEmpty
     && !other.IsEmpty
-    && Left <= other.Right
-    && Right >= other.Left
-    && Top <= other.Bottom
-    && Bottom >= other.Top;
+    && X <= other.Right
+    && Right >= other.X
+    && Y <= other.Bottom
+    && Bottom >= other.Y;
 
   public bool Contains(RTreeBoundary other) =>
     !IsEmpty
     && !other.IsEmpty
-    && Left <= other.Left
+    && X <= other.X
     && Right >= other.Right
-    && Top <= other.Top
+    && Y <= other.Y
     && Bottom >= other.Bottom;
 
   public bool Contains(double x, double y) =>
-    !IsEmpty && x >= Left && x <= Right && y >= Top && y <= Bottom;
+    !IsEmpty && x >= X && x <= Right && y >= Y && y <= Bottom;
+
+  internal bool IntersectsUnchecked(in RTreeBoundary other) =>
+    X <= other.Right
+    && Right >= other.X
+    && Y <= other.Bottom
+    && Bottom >= other.Y;
+
+  internal bool ContainsUnchecked(in RTreeBoundary other) =>
+    X <= other.X
+    && Right >= other.Right
+    && Y <= other.Y
+    && Bottom >= other.Bottom;
 
   public RTreeBoundary Union(RTreeBoundary other)
   {
@@ -71,8 +83,8 @@ public readonly struct RTreeBoundary
       return this;
     }
 
-    var left = Math.Min(Left, other.Left);
-    var top = Math.Min(Top, other.Top);
+    var left = Math.Min(X, other.X);
+    var top = Math.Min(Y, other.Y);
     var right = Math.Max(Right, other.Right);
     var bottom = Math.Max(Bottom, other.Bottom);
 
@@ -87,10 +99,10 @@ public readonly struct RTreeBoundary
     // ReSharper disable CompareOfFloatsByEqualityOperator : We do it here like .NET does it
     X == other.X
     && Y == other.Y
-    && Width == other.Width
-    && Height == other.Height;
+    && Right == other.Right
+    && Bottom == other.Bottom;
 
-  public override int GetHashCode() => HashCode.Combine(X, Y, Width, Height);
+  public override int GetHashCode() => HashCode.Combine(X, Y, Right, Bottom);
 
   public override string ToString() => ConvertToString(null, null);
 

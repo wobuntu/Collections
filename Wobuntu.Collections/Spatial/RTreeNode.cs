@@ -15,22 +15,19 @@ internal class RTreeNode<T>
   where T : notnull
 {
   private readonly int _maxEntries;
-  private readonly int _minEntries;
-  private readonly List<RTreeNode<T>>? _children;
 
-  private int _childrenVisibleInViewport;
-  private bool _isVisibleInViewport;
-
+  internal readonly List<RTreeNode<T>>? Children;
   internal RTreeNode<T>? Parent;
   internal RTreeBoundary Boundary;
   internal T? Data;
+
+  private int _childrenVisibleInViewport;
 
   private RTreeNode(T data, RTreeBoundary boundary)
   {
     ArgumentNullException.ThrowIfNull(data);
     Data = data;
     Boundary = boundary;
-    IsLeaf = true;
   }
 
   private RTreeNode(int maxEntries)
@@ -38,8 +35,7 @@ internal class RTreeNode<T>
     Debug.Assert(maxEntries >= RTreeOptions.MinEntriesPerNodeMinimum);
 
     _maxEntries = maxEntries;
-    _minEntries = RTreeOptions.DeriveMinEntriesFromMaxEntriesPerNode(maxEntries);
-    _children = new List<RTreeNode<T>>(_maxEntries);
+    Children = new List<RTreeNode<T>>(_maxEntries);
   }
 
   internal static RTreeNode<T> CreateLeaf(T data, RTreeBoundary boundary) => new(data, boundary);
@@ -47,21 +43,17 @@ internal class RTreeNode<T>
   internal static RTreeNode<T> CreateNonLeaf(int maxEntries) => new(maxEntries);
 
   [MemberNotNullWhen(true, nameof(Data))]
-  [MemberNotNullWhen(false, nameof(_children), nameof(Children))]
-  internal bool IsLeaf { get; }
+  [MemberNotNullWhen(false, nameof(Children))]
+  internal bool IsLeaf => Children == null;
 
-  internal List<RTreeNode<T>>? Children => _children;
-
-  internal int RemainingCapacity => IsLeaf ? 0 : Math.Max(_maxEntries - _children.Count, 0);
-
-  internal bool IsUnderFull => !IsLeaf && _children.Count < _minEntries;
+  internal int RemainingCapacity => IsLeaf ? 0 : Math.Max(_maxEntries - Children.Count, 0);
 
   internal bool IsOverFull
   {
     get
     {
       Debug.Assert(!IsLeaf, "Must not be called on leafs.");
-      return _maxEntries < _children.Count;
+      return _maxEntries < Children.Count;
     }
   }
 
@@ -104,16 +96,16 @@ internal class RTreeNode<T>
 
   internal bool IsVisibleInViewport
   {
-    get => _isVisibleInViewport;
+    get => _childrenVisibleInViewport > 0;
     set
     {
       Debug.Assert(IsLeaf, "Must not be called on non-leafs.");
-      if (_isVisibleInViewport == value)
+      if (_childrenVisibleInViewport > 0 == value)
       {
         return;
       }
 
-      _isVisibleInViewport = value;
+      _childrenVisibleInViewport = value ? 1 : 0;
       Parent?.ChildrenVisibleInViewport += value ? 1 : -1;
     }
   }
@@ -121,11 +113,11 @@ internal class RTreeNode<T>
   internal void AddChildDirect(RTreeNode<T> child)
   {
     Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
-    _children.Add(child);
+    Children.Add(child);
     child.Parent = this;
     UpdateBoundaryIncremental(child);
 
-    if (child._isVisibleInViewport || child._childrenVisibleInViewport > 0)
+    if (child._childrenVisibleInViewport > 0)
     {
       ChildrenVisibleInViewport++;
     }
@@ -139,11 +131,11 @@ internal class RTreeNode<T>
     for (var index = 0; index < children.Length; index++)
     {
       var child = children[index];
-      _children.Add(child);
+      Children.Add(child);
       child.Parent = this;
       UpdateBoundaryIncremental(child);
 
-      if (child._isVisibleInViewport || child._childrenVisibleInViewport > 0)
+      if (child._childrenVisibleInViewport > 0)
       {
         ChildrenVisibleInViewport++;
       }
@@ -156,7 +148,7 @@ internal class RTreeNode<T>
   {
     Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
 
-    var index = _children.IndexOf(child);
+    var index = Children.IndexOf(child);
     if (child.Parent != this || index < 0)
     {
       Debug.Fail("Should not be possible.");
@@ -164,17 +156,17 @@ internal class RTreeNode<T>
     }
 
     // Swap with the last element before removing to avoid O(n) shifting.
-    var lastIndex = _children.Count - 1;
+    var lastIndex = Children.Count - 1;
     if (index != lastIndex)
     {
-      _children[index] = _children[lastIndex];
+      Children[index] = Children[lastIndex];
     }
 
-    _children.RemoveAt(lastIndex);
+    Children.RemoveAt(lastIndex);
     child.Parent = null;
     UpdateBoundary();
 
-    if (child._isVisibleInViewport || child._childrenVisibleInViewport > 0)
+    if (child._childrenVisibleInViewport > 0)
     {
       ChildrenVisibleInViewport--;
     }
@@ -186,16 +178,16 @@ internal class RTreeNode<T>
     newParent.Boundary = Boundary;
     newParent.Parent = Parent;
 
-    if (Parent != null && Parent._children!.IndexOf(this) is var ownIndex)
+    if (Parent != null && Parent.Children!.IndexOf(this) is var ownIndex)
     {
       Debug.Assert(ownIndex >= 0);
-      Parent._children![ownIndex] = newParent;
+      Parent.Children![ownIndex] = newParent;
     }
 
-    newParent._children!.Add(this);
+    newParent.Children!.Add(this);
     Parent = newParent;
 
-    if (_isVisibleInViewport || _childrenVisibleInViewport > 0)
+    if (_childrenVisibleInViewport > 0)
     {
       // Setting the field directly, because nothing changed for the
       // parent of newParent, which would be checked by the property setter.
@@ -209,32 +201,26 @@ internal class RTreeNode<T>
   {
     Parent = null;
     Boundary = new RTreeBoundary();
-
-    if (IsLeaf)
-    {
-      _isVisibleInViewport = false;
-      Data = default;
-      return;
-    }
-
     _childrenVisibleInViewport = 0;
-    _children.Clear();
+
+    Children?.Clear();
+    Data = default;
   }
 
   private void UpdateBoundary()
   {
     Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
-    if (_children.Count == 0)
+    if (Children.Count == 0)
     {
       Boundary = new RTreeBoundary();
       return;
     }
 
-    Boundary = _children[0].Boundary;
+    Boundary = Children[0].Boundary;
 
-    for (var index = 1; index < _children.Count; index++)
+    for (var index = 1; index < Children.Count; index++)
     {
-      var childBoundary = _children[index].Boundary;
+      var childBoundary = Children[index].Boundary;
       if (childBoundary.IsEmpty)
       {
         continue;
