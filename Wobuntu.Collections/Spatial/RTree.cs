@@ -57,8 +57,13 @@ public class RTree<T>
 
   private readonly Dictionary<T, RTreeNode<T>> _itemToNode;
 
-  private List<RTreeNode<T>>? _recycledLeafNodes;
-  private List<RTreeNode<T>>? _recycledNonLeafNodes;
+  private readonly int _recycledLeafNodeCapacity;
+  private int _recycledLeafNodeCount;
+  private RTreeNode<T>[]? _recycledLeafNodes;
+
+  private readonly int _recycledNonLeafNodeCapacity;
+  private int _recycledNonLeafNodeCount;
+  private RTreeNode<T>[]? _recycledNonLeafNodes;
 
   private readonly Func<T, RTreeBoundary> _boundarySelector;
   private readonly int _maxEntriesPerNode;
@@ -99,6 +104,9 @@ public class RTree<T>
     _itemToNode = new Dictionary<T, RTreeNode<T>>();
     _queryStack = new Stack<RTreeNode<T>>(DefaultQueryStackMinCapacity);
     _viewportItems = new SynchronizedObservableOrderedSet<T>(DefaultQueryResultMinCapacity);
+
+    _recycledLeafNodeCapacity = options.RecycledLeafNodeCapacity;
+    _recycledNonLeafNodeCapacity = options.RecycledNonLeafNodeCapacity;
 
     Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
   }
@@ -217,9 +225,8 @@ public class RTree<T>
       var oldRoot = Root;
       Root = CreateNonLeaf();
 
-      oldRoot.Reset();
-      _recycledNonLeafNodes ??= [];
-      _recycledNonLeafNodes.Add(oldRoot);
+      RecycleNode(oldRoot);
+
       return true;
     }
 
@@ -236,9 +243,7 @@ public class RTree<T>
       Root = Root.Children[0];
       Root.Parent = null;
 
-      oldRoot.Reset();
-      _recycledNonLeafNodes ??= [];
-      _recycledNonLeafNodes.Add(oldRoot);
+      RecycleNode(oldRoot);
     }
 
     return true;
@@ -534,10 +539,7 @@ public class RTree<T>
       parent = MoveChildrenToParentIfCapacityAvailable(parent);
       RemoveUnderfullFromAncestorNodes(parent);
 
-      toRemove.Reset();
-      _recycledLeafNodes ??= [];
-      _recycledLeafNodes.Add(toRemove);
-
+      RecycleNode(toRemove);
       return true;
     }
 
@@ -549,10 +551,7 @@ public class RTree<T>
         parent.AddChildDirect(child);
       }
 
-      toRemove.Reset();
-      _recycledNonLeafNodes ??= [];
-      _recycledNonLeafNodes.Add(toRemove);
-
+      RecycleNode(toRemove);
       return true;
     }
 
@@ -569,11 +568,9 @@ public class RTree<T>
       }
     }
 
-    toRemove.Reset();
-    _recycledNonLeafNodes ??= [];
-    _recycledNonLeafNodes.Add(toRemove);
-
+    RecycleNode(toRemove);
     RemoveUnderfullFromAncestorNodes(parent);
+
     return true;
   }
 
@@ -612,10 +609,7 @@ public class RTree<T>
         }
       }
 
-      current.Reset();
-      _recycledNonLeafNodes ??= [];
-      _recycledNonLeafNodes.Add(current);
-
+      RecycleNode(current);
       current = parent;
     }
   }
@@ -970,14 +964,15 @@ public class RTree<T>
 
   private RTreeNode<T> CreateLeaf(T data, RTreeBoundary boundary)
   {
-    if (_recycledLeafNodes == null || _recycledLeafNodes.Count == 0)
+    if (_recycledLeafNodeCount <= 0)
     {
       return RTreeNode<T>.CreateLeaf(data, boundary);
     }
 
-    var index = _recycledLeafNodes.Count - 1;
-    var node = _recycledLeafNodes[index];
-    _recycledLeafNodes.RemoveAt(index);
+    var index = _recycledLeafNodeCount - 1;
+    var node = _recycledLeafNodes![index];
+    _recycledLeafNodes[index] = null!;
+    _recycledLeafNodeCount = index;
 
     node.Data = data;
     node.Boundary = boundary;
@@ -987,17 +982,39 @@ public class RTree<T>
 
   private RTreeNode<T> CreateNonLeaf()
   {
-    if (_recycledNonLeafNodes == null || _recycledNonLeafNodes.Count == 0)
+    if (_recycledNonLeafNodeCount <= 0)
     {
       return RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
     }
 
-    var index = _recycledNonLeafNodes.Count - 1;
-    var node = _recycledNonLeafNodes[index];
-
-    _recycledNonLeafNodes.RemoveAt(index);
+    var index = _recycledNonLeafNodeCount - 1;
+    var node = _recycledNonLeafNodes![index];
+    _recycledNonLeafNodes[index] = null!;
+    _recycledNonLeafNodeCount = index;
 
     return node;
+  }
+
+  private void RecycleNode(RTreeNode<T> node)
+  {
+    node.Reset();
+
+    if (node.IsLeaf)
+    {
+      _recycledLeafNodes ??= new RTreeNode<T>[_recycledLeafNodeCapacity];
+      if (_recycledLeafNodeCount < _recycledLeafNodeCapacity - 1)
+      {
+        _recycledLeafNodes[_recycledLeafNodeCount++] = node;
+      }
+
+      return;
+    }
+
+    _recycledNonLeafNodes ??= new RTreeNode<T>[_recycledNonLeafNodeCapacity];
+    if (_recycledNonLeafNodeCount < _recycledNonLeafNodeCapacity - 1)
+    {
+      _recycledNonLeafNodes[_recycledNonLeafNodeCount++] = node;
+    }
   }
 
   private RTreeNode<T> MoveChildrenToParentIfCapacityAvailable(RTreeNode<T> node)
@@ -1023,10 +1040,7 @@ public class RTree<T>
       parent.AddChildDirect(child);
     }
 
-    node.Reset();
-    _recycledNonLeafNodes ??= [];
-    _recycledNonLeafNodes.Add(node);
-
+    RecycleNode(node);
     return parent;
   }
 }

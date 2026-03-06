@@ -51,6 +51,18 @@ public class RTreeOptions
     }
   }
 
+  /// <summary>
+  ///   Specifies the number (default: 64) of previously removed leaf nodes, which are kept in memory for reuse.<br />
+  ///   Set 0 or a negative number to disable leaf node recycling.
+  /// </summary>
+  public int RecycledLeafNodeCapacity { get; set; } = 64;
+
+  /// <summary>
+  ///   Specifies the number (default: 32) of previously removed leaf nodes, which are kept in memory for reuse.<br />
+  ///   Set 0 or a negative number to disable leaf node recycling.
+  /// </summary>
+  public int RecycledNonLeafNodeCapacity { get; set; } = 32;
+
   internal static int DeriveMinEntriesFromMaxEntriesPerNode(int maxEntries)
   {
     if (maxEntries < MinEntriesPerNodeMinimum)
