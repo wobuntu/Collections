@@ -14,13 +14,16 @@ namespace Wobuntu.Collections.Spatial;
 public readonly struct RTreeBoundary
   : IEquatable<RTreeBoundary>, IFormattable
 {
-  public readonly double X;
-  public readonly double Y;
+  public readonly float X;
+  public readonly float Y;
 
-  public readonly double Right;
-  public readonly double Bottom;
+  public readonly float Right;
+  public readonly float Bottom;
 
-  public RTreeBoundary(double x, double y, double width, double height)
+  public readonly float CenterX;
+  public readonly float CenterY;
+
+  public RTreeBoundary(float x, float y, float width, float height)
   {
     ThrowIfInfiniteOrNaN(x);
     ThrowIfInfiniteOrNaN(y);
@@ -31,14 +34,14 @@ public readonly struct RTreeBoundary
     Y = y;
     Right = x + width;
     Bottom = y + height;
+    CenterX = (X + Right) * .5f;
+    CenterY = (Y + Bottom) * .5f;
   }
 
-  public double Width => Right - X;
-  public double Height => Bottom - Y;
-  public double CenterX => (X + Right) * .5;
-  public double CenterY => (Y + Bottom) * .5;
+  public float Width => Right - X;
+  public float Height => Bottom - Y;
 
-  public bool IsEmpty => Width <= 0 || Height <= 0;
+  public bool IsEmpty => X >= Right || Y >= Bottom;
 
   public bool Intersects(RTreeBoundary other) =>
     !IsEmpty
@@ -56,7 +59,7 @@ public readonly struct RTreeBoundary
     && Y <= other.Y
     && Bottom >= other.Bottom;
 
-  public bool Contains(double x, double y) =>
+  public bool Contains(float x, float y) =>
     !IsEmpty && x >= X && x <= Right && y >= Y && y <= Bottom;
 
   internal bool IntersectsUnchecked(in RTreeBoundary other) =>
@@ -133,23 +136,23 @@ public readonly struct RTreeBoundary
   }
 
   private static void ThrowIfInfiniteOrNaN(
-    double value,
+    float value,
     [CallerArgumentExpression(nameof(value))]
     string? valueExpression = null)
   {
-    if (double.IsInfinity(value))
+    if (float.IsInfinity(value))
     {
       throw new ArgumentException("The value must not be infinite.", valueExpression);
     }
 
-    if (double.IsNaN(value))
+    if (float.IsNaN(value))
     {
       throw new ArgumentException("The value must be a number.", valueExpression);
     }
   }
 
   private static void ThrowIfNegativeInfiniteOrNaN(
-    double value,
+    float value,
     [CallerArgumentExpression(nameof(value))] string? valueExpression = null)
   {
     if (value < 0)
@@ -157,12 +160,12 @@ public readonly struct RTreeBoundary
       throw new ArgumentException("The value must not be less than 0.", valueExpression);
     }
 
-    if (double.IsInfinity(value))
+    if (float.IsInfinity(value))
     {
       throw new ArgumentException("The value must not be infinite.", valueExpression);
     }
 
-    if (double.IsNaN(value))
+    if (float.IsNaN(value))
     {
       throw new ArgumentException("The value must be a number.", valueExpression);
     }

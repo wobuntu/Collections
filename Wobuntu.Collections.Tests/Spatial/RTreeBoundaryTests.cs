@@ -12,7 +12,7 @@ public class RTreeBoundaryTests
   [InlineData(10d, 15d, 25d)]
   [InlineData(-10d, 35d, 25d)]
   [InlineData(-100d, 75d, -25d)]
-  public void Right_CalculatedCorrectly(double x, double width, double expected)
+  public void Right_CalculatedCorrectly(float x, float width, float expected)
   {
     var boundary = new RTreeBoundary(x, 0, width, 10);
     Assert.Equal(expected, boundary.Right);
@@ -22,7 +22,7 @@ public class RTreeBoundaryTests
   [InlineData(10d, 15d, 17.5d)]
   [InlineData(-10d, 35d, 7.5d)]
   [InlineData(-100d, 75d, -62.5d)]
-  public void CenterX_CalculatedCorrectly(double x, double width, double expected)
+  public void CenterX_CalculatedCorrectly(float x, float width, float expected)
   {
     var boundary = new RTreeBoundary(x, 0, width, 10);
     Assert.Equal(expected, boundary.CenterX);
@@ -32,7 +32,7 @@ public class RTreeBoundaryTests
   [InlineData(10d, 15d, 25d)]
   [InlineData(-10d, 35d, 25d)]
   [InlineData(-100d, 75d, -25d)]
-  public void Bottom_CalculatedCorrectly(double y, double height, double expected)
+  public void Bottom_CalculatedCorrectly(float y, float height, float expected)
   {
     var boundary = new RTreeBoundary(0, y, 10, height);
     Assert.Equal(expected, boundary.Bottom);
@@ -42,7 +42,7 @@ public class RTreeBoundaryTests
   [InlineData(10d, 15d, 17.5d)]
   [InlineData(-10d, 35d, 7.5d)]
   [InlineData(-100d, 75d, -62.5d)]
-  public void CenterY_CalculatedCorrectly(double y, double height, double expected)
+  public void CenterY_CalculatedCorrectly(float y, float height, float expected)
   {
     var boundary = new RTreeBoundary(0, y, 10, height);
     Assert.Equal(expected, boundary.CenterY);
@@ -58,19 +58,19 @@ public class RTreeBoundaryTests
 
   [Fact]
   public void Ctor_InfiniteX_Throws() =>
-    Assert.Throws<ArgumentException>(() => new RTreeBoundary(double.PositiveInfinity, 0, 1, 1));
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(float.PositiveInfinity, 0, 1, 1));
 
   [Fact]
   public void Ctor_InfiniteY_Throws() =>
-    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, double.PositiveInfinity, 1, 1));
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, float.PositiveInfinity, 1, 1));
 
   [Fact]
   public void Ctor_InfiniteWidth_Throws() =>
-    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, 0, double.PositiveInfinity, 1));
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, 0, float.PositiveInfinity, 1));
 
   [Fact]
   public void Ctor_InfiniteHeight_Throws() =>
-    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, 0, 1, double.PositiveInfinity));
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, 0, 1, float.PositiveInfinity));
 
   [Fact]
   public void Intersects_TouchingRight_ReturnsTrue()
@@ -200,7 +200,7 @@ public class RTreeBoundaryTests
   [InlineData(90d, 90d, 0d, 0d, 0d, 0d, 100d, 100d)]
   [InlineData(90d, 90d, 90d, 90d, 90d, 90d, 10d, 10d)]
   public void Union_ReturnsCorrectSize(
-    double x1, double y1, double x2, double y2, double rx, double ry, double rw, double rh)
+    float x1, float y1, float x2, float y2, float rx, float ry, float rw, float rh)
   {
     // Arrange
     var first = new RTreeBoundary(x1, y1, 10, 10);
