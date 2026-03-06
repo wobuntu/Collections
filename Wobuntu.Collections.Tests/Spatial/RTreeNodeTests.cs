@@ -57,49 +57,6 @@ public class RTreeNodeTests
   }
 
   [Fact]
-  public void IsUnderFull_OnLeaf_ReturnsFalse()
-  {
-    var node = RTreeNode<string>.CreateLeaf("Test", new RTreeBoundary());
-    Assert.False(node.IsUnderFull);
-  }
-
-  [Fact]
-  public void IsUnderFull_OnNonLeafLessThanMinChildren_ReturnsTrue()
-  {
-    // Arrange
-    var nodeEmpty = RTreeNode<string>.CreateNonLeaf(2);
-    var nodeUnderFull = RTreeNode<string>.CreateNonLeaf(2);
-
-    for (var index = 1; index < RTreeOptions.MinEntriesPerNodeMinimum; index++)
-    {
-      var child = RTreeNode<string>.CreateLeaf("Test" + index, new RTreeBoundary());
-      nodeUnderFull.AddChildDirect(child);
-    }
-
-    // Act/Assert
-    Assert.True(nodeEmpty.IsUnderFull);
-    Assert.True(nodeUnderFull.IsUnderFull);
-    Assert.True(nodeUnderFull.Children!.Count < RTreeOptions.MinEntriesPerNodeMinimum);
-  }
-
-  [Fact]
-  public void IsUnderFull_OnNonLeafExactlyMinChildren_ReturnsFalse()
-  {
-    // Arrange
-    var nodeUnderFull = RTreeNode<string>.CreateNonLeaf(2);
-
-    for (var index = 0; index < RTreeOptions.MinEntriesPerNodeMinimum; index++)
-    {
-      var child = RTreeNode<string>.CreateLeaf("Test" + index, new RTreeBoundary());
-      nodeUnderFull.AddChildDirect(child);
-    }
-
-    // Act/Assert
-    Assert.False(nodeUnderFull.IsUnderFull);
-    Assert.Equal(RTreeOptions.MinEntriesPerNodeMinimum, nodeUnderFull.Children!.Count);
-  }
-
-  [Fact]
   public void RemainingCapacity_WithCustomCapacity_CountedCorrectly()
   {
     // Arrange

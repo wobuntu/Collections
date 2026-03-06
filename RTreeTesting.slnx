@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="Wobuntu.Collections.Tests/Wobuntu.Collections.Tests.csproj" />
   <Project Path="Wobuntu.Collections/Wobuntu.Collections.csproj" />
+  <Project Path="Wobuntu.Collections.Benchmarks/Wobuntu.Collections.Benchmarks.csproj" />
 </Solution>

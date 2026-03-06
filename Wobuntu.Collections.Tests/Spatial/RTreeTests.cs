@@ -611,15 +611,15 @@ public class RTreeTests
     var item32 = layer32.Children![0];
 
     // Assert
-    // Check exact same initial item nodes are still in use
-    Assert.True(ReferenceEquals(item11, item21));
-    Assert.True(ReferenceEquals(item12, item22));
-    Assert.True(ReferenceEquals(item21, item31));
-    Assert.True(ReferenceEquals(item22, item32));
+    // Check exact same initial item nodes are still in use (by checking a reference type property)
+    Assert.True(ReferenceEquals(item11.Children, item21.Children));
+    Assert.True(ReferenceEquals(item12.Children, item22.Children));
+    Assert.True(ReferenceEquals(item21.Children, item31.Children));
+    Assert.True(ReferenceEquals(item22.Children, item32.Children));
 
     // Check root node was reused while inserting items (movement happened first during add of "2")
-    Assert.True(ReferenceEquals(root1, root2));
-    Assert.True(ReferenceEquals(root2, root3));
+    Assert.True(ReferenceEquals(root1.Children, root2.Children));
+    Assert.True(ReferenceEquals(root2.Children, root3.Children));
   }
 
   [Fact]
@@ -653,10 +653,6 @@ public class RTreeTests
     var layer28 = orderedLayer13Children[2];
 
     // Assert expected structure first, so this test makes sense at all:
-    Assert.False(layer11.IsUnderFull);
-    Assert.False(layer12.IsUnderFull);
-    Assert.False(layer13.IsUnderFull);
-
     Assert.Equal(0, layer21.Data);
     Assert.Equal(1, layer22.Data);
     Assert.Equal(2, layer23.Data);
@@ -786,4 +782,16 @@ public class RTreeTests
 
     static RTreeBoundary BoundarySelector(int value) => new(value, value, 10, 10);
   }
+
+  // TODO: Test Viewport + ViewportItems
+  // - Size equals user size, not actual size
+  // - Update (add/remove) updates viewport items accordingly
+  // - All cases of hot paths
+  // TODO: Test RebalanceAncestorNodes
+  // TODO: test against insert nodes with max entries per node = 2, so that a new layer is inserted
+  // TODO: @ InsertNode & FindInsertParent
+  // TODO: Skip viewport stuff if viewport empty (e.g. RemoveNoLongerIntersectingViewportItems)? Now also running on add, etc.
+  // TODO: All the viewport stuff
+  // TODO: Test against equality of initial distribution vs adding items manually via add, should be similar, though does not need to equal
+  // TODO: Check if balancing works good and produces senseful clusters
 }
