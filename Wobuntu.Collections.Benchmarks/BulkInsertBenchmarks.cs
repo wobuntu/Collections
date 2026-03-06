@@ -23,7 +23,7 @@ public class BulkInsertBenchmarks
 
   [Benchmark(Baseline = true)]
   public RTree<DataPoint> Wobuntu_BulkInsert()
-    => new(_dataset.OurData.AsSpan(), static p => new RTreeBoundary(p.X, p.Y, 1.0, 1.0));
+    => new(_dataset.OurData.AsSpan(), static p => new RTreeBoundary(p.X, p.Y, 1.0f, 1.0f));
 
   [Benchmark]
   public RBush<RBushItem> RBush_BulkInsert()

@@ -33,7 +33,7 @@ public class MixedBenchmarks
   [IterationSetup]
   public void IterationSetup()
   {
-    _ourTree = new RTree<DataPoint>(_initialDataset.OurData.AsSpan(), static p => new RTreeBoundary(p.X, p.Y, 1.0, 1.0));
+    _ourTree = new RTree<DataPoint>(_initialDataset.OurData.AsSpan(), static p => new RTreeBoundary(p.X, p.Y, 1.0f, 1.0f));
     _rbushTree = new RBush<RBushItem>(maxEntries: 12);
     _rbushTree.BulkLoad(_initialDataset.RbushData);
   }

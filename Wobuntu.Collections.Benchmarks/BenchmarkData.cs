@@ -6,10 +6,10 @@ namespace Wobuntu.Collections.Benchmarks;
 // A minimal 2D point used as the item type in our RTree benchmarks.
 // Proper Equals/GetHashCode overrides ensure correct Dictionary<T,V> behavior
 // inside RTree and produce numbers representative of real usage.
-public readonly struct DataPoint(double x, double y) : IEquatable<DataPoint>
+public readonly struct DataPoint(float x, float y) : IEquatable<DataPoint>
 {
-  public readonly double X = x;
-  public readonly double Y = y;
+  public readonly float X = x;
+  public readonly float Y = y;
 
   public bool Equals(DataPoint other) => X == other.X && Y == other.Y;
   public override bool Equals(object? obj) => obj is DataPoint other && Equals(other);
@@ -19,7 +19,7 @@ public readonly struct DataPoint(double x, double y) : IEquatable<DataPoint>
 // RBush requires items to implement ISpatialData with a ref-readonly Envelope field.
 // The Envelope stores (MinX, MinY, MaxX, MaxY); we treat each point as a 1×1 square
 // to match the RTreeBoundary(x, y, 1, 1) used for our tree.
-public sealed class RBushItem(double x, double y) : ISpatialData
+public sealed class RBushItem(float x, float y) : ISpatialData
 {
   private readonly Envelope _envelope = new(x, y, x + 1.0, y + 1.0);
 
@@ -40,8 +40,8 @@ public sealed class BenchmarkDataset
 
     for (var index = 0; index < n; index++)
     {
-      var x = rng.NextDouble() * 10_000;
-      var y = rng.NextDouble() * 10_000;
+      var x = (float)rng.NextDouble() * 10_000;
+      var y = (float)rng.NextDouble() * 10_000;
       OurData[index] = new DataPoint(x, y);
       RbushData[index] = new RBushItem(x, y);
     }

@@ -34,7 +34,7 @@ public class QueryBenchmarks
   public void Setup()
   {
     var dataset = new BenchmarkDataset(N);
-    _ourTree = new RTree<DataPoint>(dataset.OurData.AsSpan(), static p => new RTreeBoundary(p.X, p.Y, 1.0, 1.0));
+    _ourTree = new RTree<DataPoint>(dataset.OurData.AsSpan(), static p => new RTreeBoundary(p.X, p.Y, 1.0f, 1.0f));
     _rbushTree = new RBush<RBushItem>(maxEntries: 12);
     _rbushTree.BulkLoad(dataset.RbushData);
 
@@ -46,8 +46,8 @@ public class QueryBenchmarks
     for (var index = 0; index < QueryCount; index++)
     {
       // Window is 1000×1000 inside a 10000×10000 space → ~10% area hit rate.
-      var x = rng.NextDouble() * 9_000;
-      var y = rng.NextDouble() * 9_000;
+      var x = (float)rng.NextDouble() * 9_000;
+      var y = (float)rng.NextDouble() * 9_000;
       _ourQueryBoundaries[index] = new RTreeBoundary(x, y, 1_000, 1_000);
       _rbushQueryEnvelopes[index] = new Envelope(x, y, x + 1_000, y + 1_000);
     }
