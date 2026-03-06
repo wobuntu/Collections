@@ -11,12 +11,9 @@ public class RTreeOptions
 
   internal const float MinEntriesRatio = 0.4f;
 
-  private readonly int _maxEntriesPerNode = DefaultMaxEntriesPerNode;
-  private readonly double _updateViewportItemsOnShrinkThreshold = .3;
-
   public int MaxEntriesPerNode
   {
-    get => _maxEntriesPerNode;
+    get;
     init
     {
       if (value < MinEntriesPerNodeMinimum)
@@ -24,9 +21,9 @@ public class RTreeOptions
         throw new ArgumentOutOfRangeException(nameof(value), value, "A maximum entry capacity of at least 2 is required.");
       }
 
-      _maxEntriesPerNode = value;
+      field = value;
     }
-  }
+  } = DefaultMaxEntriesPerNode;
 
   public int MinEntriesPerNode => DeriveMinEntriesFromMaxEntriesPerNode(MaxEntriesPerNode);
 
@@ -39,7 +36,7 @@ public class RTreeOptions
   /// </summary>
   public double UpdateViewportItemsOnShrinkThreshold
   {
-    get => _updateViewportItemsOnShrinkThreshold;
+    get;
     init
     {
       if (value is < 0 or > 1)
@@ -47,9 +44,9 @@ public class RTreeOptions
         throw new ArgumentOutOfRangeException(nameof(value), value, PercentageOutOfRange);
       }
 
-      _updateViewportItemsOnShrinkThreshold = value;
+      field = value;
     }
-  }
+  } = .3;
 
   /// <summary>
   ///   Specifies the number (default: 64) of previously removed leaf nodes, which are kept in memory for reuse.<br />
