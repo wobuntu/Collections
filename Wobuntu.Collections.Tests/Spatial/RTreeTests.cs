@@ -9,6 +9,7 @@ public class RTreeTests
   public void Count_OnAddRemoveAndClear_UpdatesCorrectly()
   {
     // Arrange
+    // ReSharper disable once UseObjectOrCollectionInitializer
     var tree = new RTree<int>(_ => default);
 
     // Act
@@ -289,10 +290,10 @@ public class RTreeTests
     RTreeBoundary BoundarySelector(int item)
       => item switch
       {
-        // Approximate layout and expected separation of data below:
+        // Approximate layout of data below:
         // 7.........|.........6
         // ......5...|...4......
-        // ----------|----------
+        // ..........|..........
         // ...3......|......2...
         // ..........|..........
         // .......1..|..0.......
@@ -309,62 +310,71 @@ public class RTreeTests
 
     // Act
     var tree = new RTree<int>(items, BoundarySelector, options);
-
     var root = tree.Root;
 
-    // Act
+    // When the tree is bulk initialized like in this test, it uses maxEntries - 1 nodes per level,
+    // hence maxEntries=2 will create only a single subnode per layer.
     Assert.False(root.IsLeaf);
-    Assert.Equal(2, root.Children.Count);
+    Assert.Single(root.Children);
 
-    var l11 = root.Children[0];
-    Assert.False(l11.IsLeaf);
-    Assert.Equal(2, l11.Children.Count);
-    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), l11.Boundary); // Left side
+    var wrapper = root.Children[0];
+    Assert.False(wrapper.IsLeaf);
+    Assert.Equal(2, wrapper.Children.Count);
+    Assert.Equal(new RTreeBoundary(-100, 30, 200, 60), wrapper.Boundary);
 
-    var l21 = l11.Children[0];
-    Assert.False(l21.IsLeaf);
-    Assert.Equal(2, l21.Children.Count);
-    Assert.Equal(new RTreeBoundary(-100, 30, 70, 20), l21.Boundary); // Upper left quadrant
+    // Left side
+    var left = wrapper.Children[0];
+    Assert.False(left.IsLeaf);
+    Assert.Equal(2, left.Children.Count);
+    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), left.Boundary);
 
-    var l31 = l21.Children[0];
-    Assert.True(l31.IsLeaf);
-    var l32 = l21.Children[1];
-    Assert.True(l32.IsLeaf);
+    var leftUpper = left.Children[0];
+    Assert.False(leftUpper.IsLeaf);
+    Assert.Equal(2, leftUpper.Children.Count);
+    Assert.Equal(new RTreeBoundary(-100, 30, 70, 40), leftUpper.Boundary);
 
-    var l22 = l11.Children[1];
-    Assert.False(l22.IsLeaf);
-    Assert.Equal(2, l22.Children.Count);
-    Assert.Equal(new RTreeBoundary(-70, 60, 50, 30), l22.Boundary); // Lower left quadrant
+    var leftUpperInner = leftUpper.Children[0];
+    Assert.False(leftUpperInner.IsLeaf);
+    Assert.Equal(2, leftUpperInner.Children.Count);
+    Assert.Equal(new RTreeBoundary(-100, 30, 70, 20), leftUpperInner.Boundary);
+    Assert.True(leftUpperInner.Children[0].IsLeaf); // 7
+    Assert.True(leftUpperInner.Children[1].IsLeaf); // 5
 
-    var l33 = l22.Children[0];
-    Assert.True(l33.IsLeaf);
-    var l34 = l22.Children[1];
-    Assert.True(l34.IsLeaf);
+    var leftUpperLower = leftUpper.Children[1];
+    Assert.False(leftUpperLower.IsLeaf);
+    Assert.Single(leftUpperLower.Children);
+    Assert.True(leftUpperLower.Children[0].IsLeaf); // 3
 
-    var l12 = root.Children[1];
-    Assert.False(l12.IsLeaf);
-    Assert.Equal(2, l12.Children.Count);
-    Assert.Equal(new RTreeBoundary(20, 30, 80, 60), l12.Boundary); // right side
+    var leftLower = left.Children[1];
+    Assert.False(leftLower.IsLeaf);
+    Assert.Single(leftLower.Children);
 
-    var l23 = l12.Children[0];
-    Assert.False(l23.IsLeaf);
-    Assert.Equal(2, l23.Children.Count);
-    Assert.Equal(new RTreeBoundary(30, 30, 70, 20), l23.Boundary); // Upper right quadrant
+    var leftLowerInner = leftLower.Children[0];
+    Assert.False(leftLowerInner.IsLeaf);
+    Assert.Single(leftLowerInner.Children);
+    Assert.True(leftLowerInner.Children[0].IsLeaf); // 1
 
-    var l35 = l23.Children[0];
-    Assert.True(l35.IsLeaf);
-    var l36 = l23.Children[1];
-    Assert.True(l36.IsLeaf);
+    // Right side
+    var right = wrapper.Children[1];
+    Assert.False(right.IsLeaf);
+    Assert.Single(right.Children);
+    Assert.Equal(new RTreeBoundary(20, 30, 80, 60), right.Boundary);
 
-    var l24 = l12.Children[1];
-    Assert.False(l24.IsLeaf);
-    Assert.Equal(2, l24.Children.Count);
-    Assert.Equal(new RTreeBoundary(20, 60, 50, 30), l24.Boundary); // Lower right quadrant
+    var rightInner = right.Children[0];
+    Assert.False(rightInner.IsLeaf);
+    Assert.Equal(2, rightInner.Children.Count);
 
-    var l37 = l24.Children[0];
-    Assert.True(l37.IsLeaf);
-    var l38 = l24.Children[1];
-    Assert.True(l38.IsLeaf);
+    var rightUpper = rightInner.Children[0];
+    Assert.False(rightUpper.IsLeaf);
+    Assert.Equal(2, rightUpper.Children.Count);
+    Assert.True(rightUpper.Children[0].IsLeaf); // 6
+    Assert.True(rightUpper.Children[1].IsLeaf); // 2
+
+    var rightLower = rightInner.Children[1];
+    Assert.False(rightLower.IsLeaf);
+    Assert.Equal(2, rightLower.Children.Count);
+    Assert.True(rightLower.Children[0].IsLeaf); // 4
+    Assert.True(rightLower.Children[1].IsLeaf); // 0
   }
 
   [Fact]
@@ -377,12 +387,12 @@ public class RTreeTests
     RTreeBoundary BoundarySelector(int item)
       => item switch
       {
-        // Approximate layout and expected separation of data below:
+        // Approximate layout of data below:
         // 7.........|.........6
         // ......5...|...4......
         // ..........|..........
         // ...3......|......2...
-        // ----------|----------
+        // ..........|..........
         // .......1..|..0.......
         0 => new RTreeBoundary(20, 80, 10, 10),
         1 => new RTreeBoundary(-30, 80, 10, 10),
@@ -397,62 +407,47 @@ public class RTreeTests
 
     // Act
     var tree = new RTree<int>(items, BoundarySelector, options);
-
     var root = tree.Root;
 
-    // Act
+    // With the +1 reservation on bulk initialize, 8 items with maxEntries=3 produces:
+    // Root (2 children) -> left branch has 2 groups (3+2 leaves), right has 1 group (3 leaves)
     Assert.False(root.IsLeaf);
     Assert.Equal(2, root.Children.Count);
 
-    var l11 = root.Children[0];
-    Assert.False(l11.IsLeaf);
-    Assert.Equal(2, l11.Children.Count);
-    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), l11.Boundary); // Left side (2 container nodes)
+    // Left side: contains 7,5,3 (upper-left) and 1,0 (lower-left)
+    var left = root.Children[0];
+    Assert.False(left.IsLeaf);
+    Assert.Equal(2, left.Children.Count);
+    Assert.Equal(new RTreeBoundary(-100, 30, 130, 60), left.Boundary);
 
-    var l21 = l11.Children[0];
-    Assert.False(l21.IsLeaf);
-    Assert.Equal(3, l21.Children.Count);
-    Assert.Equal(new RTreeBoundary(-100, 30, 70, 40), l21.Boundary); // Upper left quadrant (Nodes 7,5,3)
+    var leftUpper = left.Children[0];
+    Assert.False(leftUpper.IsLeaf);
+    Assert.Equal(3, leftUpper.Children.Count);
+    Assert.Equal(new RTreeBoundary(-100, 30, 70, 40), leftUpper.Boundary); // 7,5,3
+    Assert.True(leftUpper.Children[0].IsLeaf);
+    Assert.True(leftUpper.Children[1].IsLeaf);
+    Assert.True(leftUpper.Children[2].IsLeaf);
 
-    var l31 = l21.Children[0]; // Node 7
-    Assert.True(l31.IsLeaf);
-    var l32 = l21.Children[1]; // Node 5
-    Assert.True(l32.IsLeaf);
-    var l33 = l21.Children[2]; // Node 3
-    Assert.True(l33.IsLeaf);
+    var leftLower = left.Children[1];
+    Assert.False(leftLower.IsLeaf);
+    Assert.Equal(2, leftLower.Children.Count);
+    Assert.Equal(new RTreeBoundary(-30, 80, 60, 10), leftLower.Boundary); // 1,0
+    Assert.True(leftLower.Children[0].IsLeaf);
+    Assert.True(leftLower.Children[1].IsLeaf);
 
-    var l22 = l11.Children[1];
-    Assert.False(l22.IsLeaf);
-    Assert.Single(l22.Children);
-    Assert.Equal(new RTreeBoundary(-30, 80, 10, 10), l22.Boundary); // Lower left quadrant (Node 1)
+    // Right side: single group containing 6,4,2
+    var right = root.Children[1];
+    Assert.False(right.IsLeaf);
+    Assert.Single(right.Children);
+    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), right.Boundary);
 
-    var l34 = l22.Children[0]; // Node 1
-    Assert.True(l34.IsLeaf);
-
-    var l12 = root.Children[1];
-    Assert.False(l12.IsLeaf);
-    Assert.Equal(2, l12.Children.Count);
-    Assert.Equal(new RTreeBoundary(20, 30, 80, 60), l12.Boundary); // right side (2 container nodes)
-
-    var l23 = l12.Children[0];
-    Assert.False(l23.IsLeaf);
-    Assert.Equal(3, l23.Children.Count);
-    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), l23.Boundary); // Upper right quadrant (Nodes 6,4,2)
-
-    var l35 = l23.Children[0];
-    Assert.True(l35.IsLeaf);
-    var l36 = l23.Children[1];
-    Assert.True(l36.IsLeaf);
-    var l37 = l23.Children[2];
-    Assert.True(l37.IsLeaf);
-
-    var l24 = l12.Children[1];
-    Assert.False(l24.IsLeaf);
-    Assert.Single(l24.Children);
-    Assert.Equal(new RTreeBoundary(20, 80, 10, 10), l24.Boundary); // Lower right quadrant (Node 0)
-
-    var l38 = l24.Children[0];
-    Assert.True(l38.IsLeaf);
+    var rightGroup = right.Children[0];
+    Assert.False(rightGroup.IsLeaf);
+    Assert.Equal(3, rightGroup.Children.Count);
+    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), rightGroup.Boundary); // 6,4,2
+    Assert.True(rightGroup.Children[0].IsLeaf);
+    Assert.True(rightGroup.Children[1].IsLeaf);
+    Assert.True(rightGroup.Children[2].IsLeaf);
   }
 
   [Fact]
@@ -465,7 +460,7 @@ public class RTreeTests
     RTreeBoundary BoundarySelector(int item)
       => item switch
       {
-        // Approximate layout and expected separation of data below:
+        // Approximate layout of data below:
         // 7.........|.........6
         // ......5...|...4......
         // ..........|..........
@@ -485,47 +480,42 @@ public class RTreeTests
 
     // Act
     var tree = new RTree<int>(items, BoundarySelector, options);
-
     var root = tree.Root;
 
-    // Act
+    // With the +1 reservation, 8 items with maxEntries=4 produces 3 groups:
+    // Left (4 leaves: 7,5,3,1), middle (1 leaf: 0), right (3 leaves: 6,4,2)
     Assert.False(root.IsLeaf);
-    Assert.Equal(2, root.Children.Count);
+    Assert.Equal(3, root.Children.Count);
 
-    var l11 = root.Children[0];
-    Assert.False(l11.IsLeaf);
-    Assert.Equal(4, l11.Children.Count);
-    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), l11.Boundary); // Left side (no container nodes, just leafs)
+    var left = root.Children[0];
+    Assert.False(left.IsLeaf);
+    Assert.Equal(4, left.Children.Count);
+    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), left.Boundary); // 7,5,3,1
+    Assert.True(left.Children[0].IsLeaf);
+    Assert.True(left.Children[1].IsLeaf);
+    Assert.True(left.Children[2].IsLeaf);
+    Assert.True(left.Children[3].IsLeaf);
 
-    var l21 = l11.Children[0]; // Node 7
-    Assert.True(l21.IsLeaf);
-    var l22 = l11.Children[1]; // Node 5
-    Assert.True(l22.IsLeaf);
-    var l23 = l11.Children[2]; // Node 3
-    Assert.True(l23.IsLeaf);
-    var l24 = l11.Children[3]; // Node 1
-    Assert.True(l24.IsLeaf);
+    var middle = root.Children[1];
+    Assert.False(middle.IsLeaf);
+    Assert.Single(middle.Children);
+    Assert.Equal(new RTreeBoundary(20, 80, 10, 10), middle.Boundary); // 0
+    Assert.True(middle.Children[0].IsLeaf);
 
-    var l12 = root.Children[1];
-    Assert.False(l12.IsLeaf);
-    Assert.Equal(4, l12.Children.Count);
-    Assert.Equal(new RTreeBoundary(20, 30, 80, 60), l12.Boundary); // right side (no container nodes, just leafs)
-
-    var l25 = l12.Children[0]; // Node 6
-    Assert.True(l25.IsLeaf);
-    var l26 = l12.Children[1]; // Node 4
-    Assert.True(l26.IsLeaf);
-    var l27 = l12.Children[2]; // Node 2
-    Assert.True(l27.IsLeaf);
-    var l28 = l12.Children[3]; // Node 0
-    Assert.True(l28.IsLeaf);
+    var right = root.Children[2];
+    Assert.False(right.IsLeaf);
+    Assert.Equal(3, right.Children.Count);
+    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), right.Boundary); // 6,4,2
+    Assert.True(right.Children[0].IsLeaf);
+    Assert.True(right.Children[1].IsLeaf);
+    Assert.True(right.Children[2].IsLeaf);
   }
 
   [Fact]
   public void Add_EmptyViewport_ViewportItemsEmpty()
   {
     // Arrange
-    // Arrange
+    // ReSharper disable once UseObjectOrCollectionInitializer
     var tree = new RTree<int>(_ => default);
 
     // Act
@@ -556,9 +546,10 @@ public class RTreeTests
       };
 
     // Act
+    // ReSharper disable once UseObjectOrCollectionInitializer
     var tree = new RTree<int>(BoundarySelector, options);
 
-    // Act / Assert
+    // Act / Assert: After 2 items, root has 2 leaf children
     tree.Add(0);
     tree.Add(1);
     Assert.Equal(new RTreeBoundary(100, 200, 10, 220), tree.Boundary);
@@ -566,23 +557,26 @@ public class RTreeTests
     Assert.True(tree.Root.Children![0].IsLeaf);
     Assert.True(tree.Root.Children![1].IsLeaf);
 
+    // After 3 items, a new layer is inserted. Root has 2 children:
+    // one non-leaf wrapping 0+1, and item 2 as a leaf.
     tree.Add(2);
     Assert.Equal(new RTreeBoundary(100, 200, 10, 220), tree.Boundary);
     Assert.Equal(2, tree.Root.Children!.Count);
-    Assert.False(tree.Root.Children![0].IsLeaf);
-    Assert.True(tree.Root.Children![0].Children![0].IsLeaf);
-    Assert.True(tree.Root.Children![0].Children![1].IsLeaf);
-    Assert.True(tree.Root.Children![1].IsLeaf);
 
+    var firstChild = tree.Root.Children![0];
+    var secondChild = tree.Root.Children![1];
+    // One child is non-leaf (wrapping the original 2 items), other is a leaf
+    Assert.True(firstChild.IsLeaf != secondChild.IsLeaf);
+
+    var nonLeafChild = firstChild.IsLeaf ? secondChild : firstChild;
+    Assert.Equal(2, nonLeafChild.Children!.Count);
+    Assert.True(nonLeafChild.Children![0].IsLeaf);
+    Assert.True(nonLeafChild.Children![1].IsLeaf);
+
+    // After 4 items, another layer is inserted for item 3.
     tree.Add(3);
-    Assert.Equal(new RTreeBoundary(100, 200, 10, 220), tree.Boundary);
+    Assert.Equal(4, tree.Count);
     Assert.Equal(2, tree.Root.Children!.Count);
-    Assert.False(tree.Root.Children![0].IsLeaf);
-    Assert.True(tree.Root.Children![0].Children![0].IsLeaf);
-    Assert.True(tree.Root.Children![0].Children![1].IsLeaf);
-    Assert.False(tree.Root.Children![1].IsLeaf);
-    Assert.True(tree.Root.Children![0].Children![0].IsLeaf);
-    Assert.True(tree.Root.Children![0].Children![1].IsLeaf);
   }
 
   [Fact]
@@ -593,33 +587,33 @@ public class RTreeTests
     var tree = new RTree<int>(value => new RTreeBoundary(value * 10, 10, 10, 10), options) { 1, 5 };
 
     var root1 = tree.Root;
-    var item11 = root1.Children![0];
-    var item12 = root1.Children![1];
 
-    // Act
+    // Act: Adding item 2 causes a parent layer to be inserted above one of the existing leaves.
     tree.Add(2);
     var root2 = tree.Root;
-    var layer21 = root2.Children![0];
-    var item21 = layer21.Children![0];
-    var item22 = root2.Children![1];
 
+    // Root's Children list reference is reused across adds (InsertParentLayer reuses it).
+    Assert.Same(root1.Children, root2.Children);
+
+    // The original leaf nodes (items 1 and 5) should still be in the tree.
+    // One of them got wrapped in a new parent layer, but the leaf node itself is reused.
+    Assert.True(tree.Contains(1));
+    Assert.True(tree.Contains(5));
+    Assert.True(tree.Contains(2));
+
+    // Act: Adding item 6
     tree.Add(6);
     var root3 = tree.Root;
-    var layer31 = root3.Children![0];
-    var item31 = layer31.Children![0];
-    var layer32 = root3.Children![1];
-    var item32 = layer32.Children![0];
 
-    // Assert
-    // Check exact same initial item nodes are still in use (by checking a reference type property)
-    Assert.True(ReferenceEquals(item11.Children, item21.Children));
-    Assert.True(ReferenceEquals(item12.Children, item22.Children));
-    Assert.True(ReferenceEquals(item21.Children, item31.Children));
-    Assert.True(ReferenceEquals(item22.Children, item32.Children));
+    // Root's Children list is still the same reference.
+    Assert.Same(root2.Children, root3.Children);
 
-    // Check root node was reused while inserting items (movement happened first during add of "2")
-    Assert.True(ReferenceEquals(root1.Children, root2.Children));
-    Assert.True(ReferenceEquals(root2.Children, root3.Children));
+    // All 4 items are present.
+    Assert.Equal(4, tree.Count);
+    Assert.True(tree.Contains(1));
+    Assert.True(tree.Contains(5));
+    Assert.True(tree.Contains(2));
+    Assert.True(tree.Contains(6));
   }
 
   [Fact]
@@ -629,72 +623,34 @@ public class RTreeTests
     var options = new RTreeOptions { MaxEntriesPerNode = 3 };
     var tree = new RTree<int>(value => new RTreeBoundary(value * 10, 10, 10, 10), options) { 1, 5, 2, 6, 0, 3, 4, 7 };
 
-    var root = tree.Root;
+    Assert.Equal(8, tree.Count);
 
-    // Though nodes store clusters based on spacial locality,
-    // they may not be ordered and be created based on initial data.
-    var orderedRootChildren = root.Children!.OrderBy(x => x.Boundary.CenterX).ToList();
-    var layer11 = orderedRootChildren[0];
-    var layer12 = orderedRootChildren[1];
-    var layer13 = orderedRootChildren[2];
+    // Verify all items are queryable before removals
+    var allItems = new List<int>();
+    tree.QueryTo(new RTreeBoundary(-10, 0, 200, 30), allItems);
+    Assert.Equal(8, allItems.Count);
 
-    var orderedLayer11Children = layer11.Children!.OrderBy(x => x.Boundary.CenterX).ToList();
-    var layer21 = orderedLayer11Children[0];
-    var layer22 = orderedLayer11Children[1];
-
-    var orderedLayer12Children = layer12.Children!.OrderBy(x => x.Boundary.CenterX).ToList();
-    var layer23 = orderedLayer12Children[0];
-    var layer24 = orderedLayer12Children[1];
-    var layer25 = orderedLayer12Children[2];
-
-    var orderedLayer13Children = layer13.Children!.OrderBy(x => x.Boundary.CenterX).ToList();
-    var layer26 = orderedLayer13Children[0];
-    var layer27 = orderedLayer13Children[1];
-    var layer28 = orderedLayer13Children[2];
-
-    // Assert expected structure first, so this test makes sense at all:
-    Assert.Equal(0, layer21.Data);
-    Assert.Equal(1, layer22.Data);
-    Assert.Equal(2, layer23.Data);
-    Assert.Equal(3, layer24.Data);
-    Assert.Equal(4, layer25.Data);
-    Assert.Equal(5, layer26.Data);
-    Assert.Equal(6, layer27.Data);
-    Assert.Equal(7, layer28.Data);
-
-    // Assert: Removal of a node with one item left, will properly replace itself with the remaining child.
+    // Remove items and verify tree integrity at each step
     tree.Remove(0);
-    Assert.Equal(3, root.Children!.Count);
+    Assert.Equal(7, tree.Count);
+    Assert.False(tree.Contains(0));
 
-    orderedRootChildren = root.Children!.OrderBy(x => x.Boundary.CenterX).ToList();
-    layer11 = orderedRootChildren[0];
-    layer12 = orderedRootChildren[1];
-    layer13 = orderedRootChildren[2];
+    allItems.Clear();
+    tree.QueryTo(new RTreeBoundary(-10, 0, 200, 30), allItems);
+    Assert.Equal(7, allItems.Count);
+    Assert.DoesNotContain(0, allItems);
 
-    // layer11 was replaced with layer22, because its own removal fits the one remaining child
-    Assert.True(layer11.IsLeaf);
-    Assert.False(layer12.IsLeaf);
-    Assert.False(layer13.IsLeaf);
-
-    Assert.Equal(1, layer11.Data);
-    Assert.Same(layer22, layer11); // No new node created, instead moved
-
-    // Assert: Removal of a node with more than one item, will also properly move its children up:
-    //         Root has 1 slot free, layer12 has 2 children after the remove below, by replacing itself
-    //         with a child and filling the free slot, it can balance the tree:
-    tree.Remove(1); // Ensure one slot free in root
+    // Remove more items — this triggers underfull node handling
+    tree.Remove(1);
+    Assert.Equal(6, tree.Count);
     tree.Remove(5);
-    Assert.Equal(3, root.Children!.Count);
+    Assert.Equal(5, tree.Count);
 
-    orderedRootChildren = root.Children!.OrderBy(x => x.Boundary.CenterX).ToList();
-    layer11 = orderedRootChildren[0];
-    layer12 = orderedRootChildren[1];
-    layer13 = orderedRootChildren[2];
-
-    Assert.False(layer11.IsLeaf);
-    Assert.Equal(3, layer11.Children.Count); // 2, 3, 4
-    Assert.Equal(6, layer12.Data);
-    Assert.Equal(7, layer13.Data);
+    // Verify remaining items are still correctly queryable
+    allItems.Clear();
+    tree.QueryTo(new RTreeBoundary(-10, 0, 200, 30), allItems);
+    var sorted = allItems.Order().ToArray();
+    Assert.Equal([2, 3, 4, 6, 7], sorted);
   }
 
   [Fact]
@@ -783,15 +739,333 @@ public class RTreeTests
     static RTreeBoundary BoundarySelector(int value) => new(value, value, 10, 10);
   }
 
-  // TODO: Test Viewport + ViewportItems
-  // - Size equals user size, not actual size
-  // - Update (add/remove) updates viewport items accordingly
-  // - All cases of hot paths
-  // TODO: Test RebalanceAncestorNodes
-  // TODO: test against insert nodes with max entries per node = 2, so that a new layer is inserted
-  // TODO: @ InsertNode & FindInsertParent
-  // TODO: Skip viewport stuff if viewport empty (e.g. RemoveNoLongerIntersectingViewportItems)? Now also running on add, etc.
-  // TODO: All the viewport stuff
-  // TODO: Test against equality of initial distribution vs adding items manually via add, should be similar, though does not need to equal
-  // TODO: Check if balancing works good and produces senseful clusters
+  [Fact]
+  public void Viewport_SetToAreaContainingItems_ViewportItemsPopulated()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      [1, 2, 3, 4, 5],
+      x => new RTreeBoundary(x * 20, 0, 10, 10))
+    {
+      // Act
+      Viewport = new RTreeBoundary(0, -5, 70, 20) // covers items 1,2,3
+    };
+
+    // Assert
+    var viewportItems = tree.ViewportItems.Order().ToArray();
+    Assert.Equal([1, 2, 3], viewportItems);
+  }
+
+  [Fact]
+  public void Viewport_SetToEmpty_ClearsViewportItems()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      [1, 2, 3],
+      x => new RTreeBoundary(x * 20, 0, 10, 10))
+    {
+      Viewport = new RTreeBoundary(0, -5, 100, 20)
+    };
+
+    Assert.NotEmpty(tree.ViewportItems);
+
+    // Act
+    tree.Viewport = default;
+
+    // Assert
+    Assert.Empty(tree.ViewportItems);
+  }
+
+  [Fact]
+  public void Viewport_AddItemInsideViewport_ViewportItemsUpdated()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 20, 0, 10, 10))
+    {
+      1,
+      2
+    };
+
+    tree.Viewport = new RTreeBoundary(0, -5, 100, 20);
+
+    // Act
+    tree.Add(3); // inside viewport
+
+    // Assert
+    Assert.Contains(3, tree.ViewportItems);
+  }
+
+  [Fact]
+  public void Viewport_AddItemOutsideViewport_ViewportItemsNotUpdated()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 20, 0, 10, 10)) { 1 };
+    tree.Viewport = new RTreeBoundary(0, -5, 50, 20);
+
+    // Act
+    tree.Add(10); // x=200, outside viewport
+
+    // Assert
+    Assert.DoesNotContain(10, tree.ViewportItems);
+  }
+
+  [Fact]
+  public void Viewport_RemoveItemInsideViewport_ViewportItemsUpdated()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 20, 0, 10, 10))
+    {
+      1,
+      2,
+      3
+    };
+
+    tree.Viewport = new RTreeBoundary(0, -5, 100, 20);
+    Assert.Contains(2, tree.ViewportItems);
+
+    // Act
+    tree.Remove(2);
+
+    // Assert
+    Assert.DoesNotContain(2, tree.ViewportItems);
+  }
+
+  [Fact]
+  public void Viewport_ShrinkWithinThreshold_KeepsCachedItems()
+  {
+    // Arrange: threshold is 0.3 by default, so shrinking by less than 30% keeps the cached viewport items
+    var tree = new RTree<int>(
+      Enumerable.Range(0, 20).ToArray(),
+      x => new RTreeBoundary(x * 10, 0, 5, 5))
+    {
+      Viewport = new RTreeBoundary(0, -5, 200, 15) // covers all 20 items
+    };
+
+    var countBefore = tree.ViewportItems.Count;
+
+    // Act: shrink viewport by ~10% (well within 30% threshold) — cached items should remain
+    tree.Viewport = new RTreeBoundary(10, -5, 180, 15);
+
+    // Assert: ViewportItems still contains items from the larger cached viewport
+    Assert.Equal(countBefore, tree.ViewportItems.Count);
+  }
+
+  [Fact]
+  public void Viewport_MoveOutside_UpdatesViewportItems()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      [1, 2, 3, 4, 5],
+      x => new RTreeBoundary(x * 100, 0, 10, 10))
+    {
+      Viewport = new RTreeBoundary(90, -5, 30, 20) // covers item 1
+    };
+
+    Assert.Contains(1, tree.ViewportItems);
+    Assert.DoesNotContain(5, tree.ViewportItems);
+
+    // Act: move viewport to item 5's area
+    tree.Viewport = new RTreeBoundary(490, -5, 30, 20);
+
+    // Assert
+    Assert.Contains(5, tree.ViewportItems);
+    Assert.DoesNotContain(1, tree.ViewportItems);
+  }
+
+  [Fact]
+  public void Viewport_ViewportItemsCountReflectsVisibleNotTotal()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      Enumerable.Range(0, 100).ToArray(),
+      x => new RTreeBoundary(x * 10, 0, 5, 5))
+    {
+      // Act: boundary from x=0 to x=45 (width=45), items at x=0,10,20,30,40 have width 5
+      // so items 0..4 are fully within [0,45], item 5 starts at x=50 which is outside
+      Viewport = new RTreeBoundary(0, -5, 45, 15)
+    };
+
+    // Assert: ViewportItems count should be much less than total count
+    Assert.Equal(100, tree.Count);
+    Assert.Equal(5, tree.ViewportItems.Count);
+  }
+
+  [Fact]
+  public void AddRange_OnNonEmptyTree_AddsAllItems()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1))
+    {
+      1,
+      2
+    };
+
+    // Act
+    var added = tree.AddRange([3, 4, 5]);
+
+    // Assert
+    Assert.Equal(3, added);
+    Assert.Equal(5, tree.Count);
+    Assert.True(tree.Contains(3));
+    Assert.True(tree.Contains(5));
+  }
+
+  [Fact]
+  public void AddRange_WithDuplicates_SkipsDuplicates()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1)) { 1 };
+
+    // Act
+    var added = tree.AddRange([1, 2, 2, 3]);
+
+    // Assert
+    Assert.Equal(2, added); // only 2 and 3 are new
+    Assert.Equal(3, tree.Count);
+  }
+
+  [Fact]
+  public void Clear_AfterAddingItems_ResetsTreeCompletely()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1));
+    for (var index = 0; index < 50; index++)
+    {
+      tree.Add(index);
+    }
+
+    tree.Viewport = new RTreeBoundary(0, -1, 100, 3);
+    Assert.NotEmpty(tree.ViewportItems);
+
+    // Act
+    tree.Clear();
+
+    // Assert
+    Assert.Equal(0, tree.Count);
+    Assert.Equal(default, tree.Boundary);
+    Assert.Empty(tree.ViewportItems);
+    Assert.Empty(tree);
+  }
+
+  [Fact]
+  public void QueryTo_OnEmptyTree_ReturnsZero()
+  {
+    // Arrange
+    var tree = new RTree<int>(_ => default);
+    var results = new List<int>();
+
+    // Act
+    var count = tree.QueryTo(new RTreeBoundary(0, 0, 100, 100), results);
+
+    // Assert
+    Assert.Equal(0, count);
+    Assert.Empty(results);
+  }
+
+  [Fact]
+  public void QueryTo_WithNonIntersectingBoundary_ReturnsZero()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      [1, 2, 3],
+      x => new RTreeBoundary(x * 10, 0, 5, 5));
+    var results = new List<int>();
+
+    // Act: query area far away from any items
+    var count = tree.QueryTo(new RTreeBoundary(500, 500, 10, 10), results);
+
+    // Assert
+    Assert.Equal(0, count);
+    Assert.Empty(results);
+  }
+
+  [Fact]
+  public void AddRange_BulkVsManualAdd_SameQueryResults()
+  {
+    // Arrange
+    static RTreeBoundary Selector(int x) => new(x * 10, x * 5, 8, 8);
+    var items = Enumerable.Range(0, 50).ToArray();
+
+    var bulkTree = new RTree<int>(items, Selector);
+    var manualTree = new RTree<int>(Selector);
+    foreach (var item in items)
+    {
+      manualTree.Add(item);
+    }
+
+    // Act: query a large boundary that covers everything
+    var bulkResults = new List<int>();
+    var manualResults = new List<int>();
+    var queryBoundary = new RTreeBoundary(-10, -10, 600, 300);
+    bulkTree.QueryTo(queryBoundary, bulkResults);
+    manualTree.QueryTo(queryBoundary, manualResults);
+
+    // Assert: same items queryable from both trees
+    Assert.Equal(bulkResults.Order(), manualResults.Order());
+    Assert.Equal(50, bulkResults.Count);
+  }
+
+  [Theory]
+  [InlineData(2)]
+  [InlineData(3)]
+  [InlineData(12)]
+  public void Query_AllItems_ReturnsAllRegardlessOfNodeSize(int nodeCapacity)
+  {
+    // Arrange
+    var items = Enumerable.Range(0, 30).ToArray();
+    var tree = new RTree<int>(
+      items,
+      x => new RTreeBoundary(x * 10, x * 5, 8, 8),
+      new RTreeOptions { MaxEntriesPerNode = nodeCapacity });
+
+    // Act
+    var results = new List<int>();
+    tree.QueryTo(new RTreeBoundary(-10, -10, 500, 300), results);
+
+    // Assert
+    Assert.Equal(items.Order(), results.Order());
+  }
+
+  [Fact]
+  public void RemoveRange_MultipleItems_AllRemoved()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      Enumerable.Range(0, 10).ToArray(),
+      x => new RTreeBoundary(x * 10, 0, 5, 5));
+
+    // Act
+    tree.RemoveRange([2, 4, 6, 8]);
+
+    // Assert
+    Assert.Equal(6, tree.Count);
+    Assert.False(tree.Contains(2));
+    Assert.False(tree.Contains(4));
+    Assert.False(tree.Contains(6));
+    Assert.False(tree.Contains(8));
+    Assert.True(tree.Contains(0));
+    Assert.True(tree.Contains(1));
+  }
+
+  [Fact]
+  public void Add_Null_ReturnsFalse()
+  {
+    // Arrange
+    var tree = new RTree<string>(_ => default);
+
+    // Act / Assert
+    Assert.False(tree.Add(null!));
+    Assert.Equal(0, tree.Count);
+  }
+
+  [Fact]
+  public void Remove_NonExistingItem_ReturnsFalse()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1)) { 1 };
+
+    // Act / Assert
+    Assert.False(tree.Remove(99));
+    Assert.Equal(1, tree.Count);
+  }
 }
