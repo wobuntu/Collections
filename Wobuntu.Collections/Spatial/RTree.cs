@@ -285,9 +285,9 @@ public class RTree<T>
   public void Clear()
   {
     // Note that items removed via Clear are not recycled, to not give up O(1) complexity for caching old
+    ResetViewportItems();
     Root = CreateNonLeaf();
     _itemToNode.Clear();
-    ResetViewportItems();
   }
 
   /// <summary>
