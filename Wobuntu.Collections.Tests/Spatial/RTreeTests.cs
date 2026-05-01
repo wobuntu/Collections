@@ -463,6 +463,14 @@ public class RTreeTests
   }
 
   [Fact]
+  public void Contains_Null_ReturnsFalse()
+  {
+    var tree = new RTree<string>(_ => default) { "a" };
+    var result = tree.Contains(null!);
+    Assert.False(result);
+  }
+
+  [Fact]
   public void GetEnumerator_HappyPath_AllItemsAreEnumerated()
   {
     // Arrange
@@ -729,6 +737,41 @@ public class RTreeTests
   }
 
   [Fact]
+  public void Viewport_SameValueAssignedAgain_IsNoOp()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      [1, 2, 3, 4, 5],
+      x => new RTreeBoundary(x * 20, 0, 10, 10))
+    {
+      Viewport = new RTreeBoundary(0, -5, 70, 20) // covers items 1,2,3
+    };
+
+    var countBefore = tree.ViewportItems.Count;
+    var itemsBefore = tree.ViewportItems.Order().ToArray();
+
+    // Act: assign the same viewport value again
+    tree.Viewport = new RTreeBoundary(0, -5, 70, 20);
+
+    // Assert
+    Assert.Equal(countBefore, tree.ViewportItems.Count);
+    Assert.Equal(itemsBefore, tree.ViewportItems.Order().ToArray());
+  }
+
+  [Fact]
+  public void Viewport_SetBeforeItemsAdded_ViewportItemsEmpty()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, 0, 5, 5));
+
+    // Act
+    tree.Viewport = new RTreeBoundary(0, -5, 200, 15);
+
+    // Assert
+    Assert.Empty(tree.ViewportItems);
+  }
+
+  [Fact]
   public void Viewport_SetToAreaContainingItems_ViewportItemsPopulated()
   {
     // Arrange
@@ -743,6 +786,27 @@ public class RTreeTests
     // Assert
     var viewportItems = tree.ViewportItems.Order().ToArray();
     Assert.Equal([1, 2, 3], viewportItems);
+  }
+
+  [Fact]
+  public void Viewport_ItemTouchingEdge_IsIncluded()
+  {
+    // Arrange: Intersects uses <= / >= so boundaries that exactly touch are included.
+    var tree = new RTree<int>(
+      [1, 2],
+      item => item switch
+      {
+        1 => new RTreeBoundary(0, 0, 10, 10),  // Right=10 touches viewport left=10.
+        2 => new RTreeBoundary(20, 0, 10, 10), // Left=20 touches viewport right=20.
+        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null)
+      })
+    {
+      Viewport = new RTreeBoundary(10, -5, 10, 20) // x=10..20
+    };
+
+    // Assert
+    Assert.Contains(1, tree.ViewportItems);
+    Assert.Contains(2, tree.ViewportItems);
   }
 
   [Fact]
@@ -763,6 +827,31 @@ public class RTreeTests
 
     // Assert
     Assert.Empty(tree.ViewportItems);
+  }
+
+  [Fact]
+  public void Viewport_AfterClearAndReset_ViewportItemsRepopulated()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 20, 0, 10, 10)) { 1, 2, 3, 4, 5 };
+    tree.Viewport = new RTreeBoundary(0, -5, 110, 20); // covers all 5
+    Assert.Equal(5, tree.ViewportItems.Count);
+
+    // Act: clear and re-add items (Clear does not reset the viewport value).
+    tree.Clear();
+    Assert.Empty(tree.ViewportItems);
+    tree.AddRange([1, 2, 3, 4, 5]);
+
+    // Set a new (smaller) viewport; items within it must be repopulated correctly.
+    tree.Viewport = new RTreeBoundary(0, -5, 70, 20); // Covers 1(x=20..30),2(x=40..50),3(x=60..70)
+
+    // Assert
+    Assert.Equal(3, tree.ViewportItems.Count);
+    Assert.Contains(1, tree.ViewportItems);
+    Assert.Contains(2, tree.ViewportItems);
+    Assert.Contains(3, tree.ViewportItems);
+    Assert.DoesNotContain(4, tree.ViewportItems);
+    Assert.DoesNotContain(5, tree.ViewportItems);
   }
 
   [Fact]
@@ -840,6 +929,34 @@ public class RTreeTests
   }
 
   [Fact]
+  public void Viewport_ShrinkBeyondThreshold_RemovesNoLongerVisibleItems()
+  {
+    // Arrange: Threshold is 0.3 by default; shrinking by more than 30% triggers an update.
+    var tree = new RTree<int>(
+      Enumerable.Range(0, 10).ToArray(),
+      x => new RTreeBoundary(x * 10, 0, 5, 5))
+    {
+      Viewport = new RTreeBoundary(0, -5, 100, 15) // Covers all 10 items (0..9).
+    };
+
+    Assert.Equal(10, tree.ViewportItems.Count);
+
+    // Act: Shrink by ~55% (> 30% threshold); items 5..9 are no longer visible.
+    tree.Viewport = new RTreeBoundary(0, -5, 45, 15);
+
+    // Assert
+    for (var index = 0; index < 5; index++)
+    {
+      Assert.Contains(index, tree.ViewportItems);
+    }
+
+    for (var index = 5; index < 10; index++)
+    {
+      Assert.DoesNotContain(index, tree.ViewportItems);
+    }
+  }
+
+  [Fact]
   public void Viewport_MoveOutside_UpdatesViewportItems()
   {
     // Arrange
@@ -859,6 +976,59 @@ public class RTreeTests
     // Assert
     Assert.Contains(5, tree.ViewportItems);
     Assert.DoesNotContain(1, tree.ViewportItems);
+  }
+
+  [Fact]
+  public void Viewport_ExpandBeyondCachedBoundary_NewItemsAdded()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      [1, 2, 3, 4, 5],
+      x => new RTreeBoundary(x * 20, 0, 10, 10))
+    {
+      Viewport = new RTreeBoundary(0, -5, 50, 20) // Covers items 1(x=20..30) and 2(x=40..50).
+    };
+
+    Assert.Equal(2, tree.ViewportItems.Count);
+
+    // Act: expand viewport to also cover items 3 and 4
+    tree.Viewport = new RTreeBoundary(0, -5, 90, 20); // Covers 1,2,3,4.
+
+    // Assert
+    Assert.Equal(4, tree.ViewportItems.Count);
+    Assert.Contains(1, tree.ViewportItems);
+    Assert.Contains(2, tree.ViewportItems);
+    Assert.Contains(3, tree.ViewportItems);
+    Assert.Contains(4, tree.ViewportItems);
+    Assert.DoesNotContain(5, tree.ViewportItems);
+  }
+
+  [Fact]
+  public void Viewport_PanWithPartialOverlap_ItemsUpdated()
+  {
+    // Arrange
+    var tree = new RTree<int>(
+      [1, 2, 3, 4, 5],
+      x => new RTreeBoundary(x * 20, 0, 10, 10))
+    {
+      Viewport = new RTreeBoundary(15, -5, 60, 20) // Covers items 1(x=20..30),2(x=40..50),3(x=60..70).
+    };
+
+    Assert.Contains(1, tree.ViewportItems);
+    Assert.Contains(2, tree.ViewportItems);
+    Assert.Contains(3, tree.ViewportItems);
+    Assert.DoesNotContain(4, tree.ViewportItems);
+    Assert.DoesNotContain(5, tree.ViewportItems);
+
+    // Act: Pan right — items 1,2 leave; items 4,5 enter; item 3 stays.
+    tree.Viewport = new RTreeBoundary(55, -5, 60, 20); // covers items 3(x=60..70),4(x=80..90),5(x=100..110)
+
+    // Assert
+    Assert.DoesNotContain(1, tree.ViewportItems);
+    Assert.DoesNotContain(2, tree.ViewportItems);
+    Assert.Contains(3, tree.ViewportItems);
+    Assert.Contains(4, tree.ViewportItems);
+    Assert.Contains(5, tree.ViewportItems);
   }
 
   [Fact]
