@@ -65,12 +65,36 @@ public class RTreeBoundaryTests
     Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, float.PositiveInfinity, 1, 1));
 
   [Fact]
+  public void Ctor_NegativeInfiniteX_Throws() =>
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(float.NegativeInfinity, 0, 1, 1));
+
+  [Fact]
+  public void Ctor_NegativeInfiniteY_Throws() =>
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, float.NegativeInfinity, 1, 1));
+
+  [Fact]
+  public void Ctor_NanX_Throws() =>
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(float.NaN, 0, 1, 1));
+
+  [Fact]
+  public void Ctor_NanY_Throws() =>
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, float.NaN, 1, 1));
+
+  [Fact]
   public void Ctor_InfiniteWidth_Throws() =>
     Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, 0, float.PositiveInfinity, 1));
 
   [Fact]
   public void Ctor_InfiniteHeight_Throws() =>
     Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, 0, 1, float.PositiveInfinity));
+
+  [Fact]
+  public void Ctor_NanWidth_Throws() =>
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, 0, float.NaN, 1));
+
+  [Fact]
+  public void Ctor_NanHeight_Throws() =>
+    Assert.Throws<ArgumentException>(() => new RTreeBoundary(0, 0, 1, float.NaN));
 
   [Fact]
   public void Intersects_TouchingRight_ReturnsTrue()
@@ -141,6 +165,17 @@ public class RTreeBoundaryTests
   }
 
   [Fact]
+  public void Intersects_BothEmpty_ReturnsFalse()
+  {
+    // Arrange
+    var first = new RTreeBoundary(0, 0, 0, 0);
+    var second = new RTreeBoundary(0, 0, 0, 0);
+
+    // Act / Assert
+    Assert.False(first.Intersects(second));
+  }
+
+  [Fact]
   public void Contains_OneSideEmpty_ReturnsFalse()
   {
     // Arrange
@@ -189,6 +224,19 @@ public class RTreeBoundaryTests
 
     Assert.False(boundary.Contains(new RTreeBoundary(91, 90, 10, 10)));
     Assert.False(boundary.Contains(new RTreeBoundary(90, 91, 10, 10)));
+  }
+
+  [Fact]
+  public void Contains_PointOutside_ReturnsFalse()
+  {
+    // Arrange
+    var boundary = new RTreeBoundary(0, 0, 100, 100);
+
+    // Act / Assert
+    Assert.False(boundary.Contains(-1, 50));   // left
+    Assert.False(boundary.Contains(101, 50));  // right
+    Assert.False(boundary.Contains(50, -1));   // top
+    Assert.False(boundary.Contains(50, 101));  // bottom
   }
 
   [Theory]

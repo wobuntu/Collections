@@ -7,6 +7,216 @@ namespace Wobuntu.Collections.Tests.Spatial;
 public class RTreeTests
 {
   [Fact]
+  public void Ctor_NullBoundarySelector_Throws()
+  {
+    Assert.Throws<ArgumentNullException>(() => new RTree<int>(null!));
+  }
+
+  [Fact]
+  public void Ctor_WithKnownDataMaxNodeSize2_InitialTreeStructureExpected()
+  {
+    // Arrange
+    var items = Enumerable.Range(0, 8).ToArray();
+    var options = new RTreeOptions { MaxEntriesPerNode = 2 };
+
+    RTreeBoundary BoundarySelector(int item)
+      => item switch
+      {
+        0 => new RTreeBoundary(20, 80, 10, 10),
+        1 => new RTreeBoundary(-30, 80, 10, 10),
+        2 => new RTreeBoundary(60, 60, 10, 10),
+        3 => new RTreeBoundary(-70, 60, 10, 10),
+        4 => new RTreeBoundary(30, 40, 10, 10),
+        5 => new RTreeBoundary(-40, 40, 10, 10),
+        6 => new RTreeBoundary(90, 30, 10, 10),
+        7 => new RTreeBoundary(-100, 30, 10, 10),
+        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null)
+      };
+
+    // Act
+    var tree = new RTree<int>(items, BoundarySelector, options);
+    var root = tree.CreateTestView(tree.RootIndex);
+
+    Assert.False(root.IsLeaf);
+    Assert.Equal(1, root.ChildCount);
+
+    var wrapper = root.Child(0);
+    Assert.False(wrapper.IsLeaf);
+    Assert.Equal(2, wrapper.ChildCount);
+    Assert.Equal(new RTreeBoundary(-100, 30, 200, 60), wrapper.Boundary);
+
+    // Left side
+    var left = wrapper.Child(0);
+    Assert.False(left.IsLeaf);
+    Assert.Equal(2, left.ChildCount);
+    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), left.Boundary);
+
+    var leftUpper = left.Child(0);
+    Assert.False(leftUpper.IsLeaf);
+    Assert.Equal(2, leftUpper.ChildCount);
+    Assert.Equal(new RTreeBoundary(-100, 30, 70, 40), leftUpper.Boundary);
+
+    var leftUpperInner = leftUpper.Child(0);
+    Assert.False(leftUpperInner.IsLeaf);
+    Assert.Equal(2, leftUpperInner.ChildCount);
+    Assert.Equal(new RTreeBoundary(-100, 30, 70, 20), leftUpperInner.Boundary);
+    Assert.True(leftUpperInner.Child(0).IsLeaf); // 7
+    Assert.True(leftUpperInner.Child(1).IsLeaf); // 5
+
+    var leftUpperLower = leftUpper.Child(1);
+    Assert.False(leftUpperLower.IsLeaf);
+    Assert.Equal(1, leftUpperLower.ChildCount);
+    Assert.True(leftUpperLower.Child(0).IsLeaf); // 3
+
+    var leftLower = left.Child(1);
+    Assert.False(leftLower.IsLeaf);
+    Assert.Equal(1, leftLower.ChildCount);
+
+    var leftLowerInner = leftLower.Child(0);
+    Assert.False(leftLowerInner.IsLeaf);
+    Assert.Equal(1, leftLowerInner.ChildCount);
+    Assert.True(leftLowerInner.Child(0).IsLeaf); // 1
+
+    // Right side
+    var right = wrapper.Child(1);
+    Assert.False(right.IsLeaf);
+    Assert.Equal(1, right.ChildCount);
+    Assert.Equal(new RTreeBoundary(20, 30, 80, 60), right.Boundary);
+
+    var rightInner = right.Child(0);
+    Assert.False(rightInner.IsLeaf);
+    Assert.Equal(2, rightInner.ChildCount);
+
+    var rightUpper = rightInner.Child(0);
+    Assert.False(rightUpper.IsLeaf);
+    Assert.Equal(2, rightUpper.ChildCount);
+    Assert.True(rightUpper.Child(0).IsLeaf); // 6
+    Assert.True(rightUpper.Child(1).IsLeaf); // 2
+
+    var rightLower = rightInner.Child(1);
+    Assert.False(rightLower.IsLeaf);
+    Assert.Equal(2, rightLower.ChildCount);
+    Assert.True(rightLower.Child(0).IsLeaf); // 4
+    Assert.True(rightLower.Child(1).IsLeaf); // 0
+  }
+
+  [Fact]
+  public void Ctor_WithKnownDataMaxNodeSize3_InitialTreeStructureExpected()
+  {
+    // Arrange
+    var items = Enumerable.Range(0, 8).ToArray();
+    var options = new RTreeOptions { MaxEntriesPerNode = 3 };
+
+    RTreeBoundary BoundarySelector(int item)
+      => item switch
+      {
+        0 => new RTreeBoundary(20, 80, 10, 10),
+        1 => new RTreeBoundary(-30, 80, 10, 10),
+        2 => new RTreeBoundary(60, 60, 10, 10),
+        3 => new RTreeBoundary(-70, 60, 10, 10),
+        4 => new RTreeBoundary(30, 40, 10, 10),
+        5 => new RTreeBoundary(-40, 40, 10, 10),
+        6 => new RTreeBoundary(90, 30, 10, 10),
+        7 => new RTreeBoundary(-100, 30, 10, 10),
+        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null)
+      };
+
+    // Act
+    var tree = new RTree<int>(items, BoundarySelector, options);
+    var root = tree.CreateTestView(tree.RootIndex);
+
+    Assert.False(root.IsLeaf);
+    Assert.Equal(2, root.ChildCount);
+
+    // Left side: contains 7,5,3 (upper-left) and 1,0 (lower-left)
+    var left = root.Child(0);
+    Assert.False(left.IsLeaf);
+    Assert.Equal(2, left.ChildCount);
+    Assert.Equal(new RTreeBoundary(-100, 30, 130, 60), left.Boundary);
+
+    var leftUpper = left.Child(0);
+    Assert.False(leftUpper.IsLeaf);
+    Assert.Equal(3, leftUpper.ChildCount);
+    Assert.Equal(new RTreeBoundary(-100, 30, 70, 40), leftUpper.Boundary);
+    Assert.True(leftUpper.Child(0).IsLeaf);
+    Assert.True(leftUpper.Child(1).IsLeaf);
+    Assert.True(leftUpper.Child(2).IsLeaf);
+
+    var leftLower = left.Child(1);
+    Assert.False(leftLower.IsLeaf);
+    Assert.Equal(2, leftLower.ChildCount);
+    Assert.Equal(new RTreeBoundary(-30, 80, 60, 10), leftLower.Boundary);
+    Assert.True(leftLower.Child(0).IsLeaf);
+    Assert.True(leftLower.Child(1).IsLeaf);
+
+    // Right side: single group containing 6,4,2
+    var right = root.Child(1);
+    Assert.False(right.IsLeaf);
+    Assert.Equal(1, right.ChildCount);
+    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), right.Boundary);
+
+    var rightGroup = right.Child(0);
+    Assert.False(rightGroup.IsLeaf);
+    Assert.Equal(3, rightGroup.ChildCount);
+    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), rightGroup.Boundary);
+    Assert.True(rightGroup.Child(0).IsLeaf);
+    Assert.True(rightGroup.Child(1).IsLeaf);
+    Assert.True(rightGroup.Child(2).IsLeaf);
+  }
+
+  [Fact]
+  public void Ctor_WithKnownDataMaxNodeSize4_InitialTreeStructureExpected()
+  {
+    // Arrange
+    var items = Enumerable.Range(0, 8).ToArray();
+    var options = new RTreeOptions { MaxEntriesPerNode = 4 };
+
+    RTreeBoundary BoundarySelector(int item)
+      => item switch
+      {
+        0 => new RTreeBoundary(20, 80, 10, 10),
+        1 => new RTreeBoundary(-30, 80, 10, 10),
+        2 => new RTreeBoundary(60, 60, 10, 10),
+        3 => new RTreeBoundary(-70, 60, 10, 10),
+        4 => new RTreeBoundary(30, 40, 10, 10),
+        5 => new RTreeBoundary(-40, 40, 10, 10),
+        6 => new RTreeBoundary(90, 30, 10, 10),
+        7 => new RTreeBoundary(-100, 30, 10, 10),
+        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null)
+      };
+
+    // Act
+    var tree = new RTree<int>(items, BoundarySelector, options);
+    var root = tree.CreateTestView(tree.RootIndex);
+
+    Assert.False(root.IsLeaf);
+    Assert.Equal(3, root.ChildCount);
+
+    var left = root.Child(0);
+    Assert.False(left.IsLeaf);
+    Assert.Equal(4, left.ChildCount);
+    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), left.Boundary);
+    Assert.True(left.Child(0).IsLeaf);
+    Assert.True(left.Child(1).IsLeaf);
+    Assert.True(left.Child(2).IsLeaf);
+    Assert.True(left.Child(3).IsLeaf);
+
+    var middle = root.Child(1);
+    Assert.False(middle.IsLeaf);
+    Assert.Equal(1, middle.ChildCount);
+    Assert.Equal(new RTreeBoundary(20, 80, 10, 10), middle.Boundary);
+    Assert.True(middle.Child(0).IsLeaf);
+
+    var right = root.Child(2);
+    Assert.False(right.IsLeaf);
+    Assert.Equal(3, right.ChildCount);
+    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), right.Boundary);
+    Assert.True(right.Child(0).IsLeaf);
+    Assert.True(right.Child(1).IsLeaf);
+    Assert.True(right.Child(2).IsLeaf);
+  }
+
+  [Fact]
   public void Count_OnAddRemoveAndClear_UpdatesCorrectly()
   {
     // Arrange
@@ -279,210 +489,6 @@ public class RTreeTests
     Assert.Equal(sumDataAll, sumTreeAll);
     Assert.Equal(sumDataWithout5, sumTreeWithout5);
     Assert.Equal(sumDataWithout5With100, sumTreeWithout5With100);
-  }
-
-  [Fact]
-  public void Constructor_WithKnownDataMaxNodeSize2_InitialTreeStructureExpected()
-  {
-    // Arrange
-    var items = Enumerable.Range(0, 8).ToArray();
-    var options = new RTreeOptions { MaxEntriesPerNode = 2 };
-
-    RTreeBoundary BoundarySelector(int item)
-      => item switch
-      {
-        0 => new RTreeBoundary(20, 80, 10, 10),
-        1 => new RTreeBoundary(-30, 80, 10, 10),
-        2 => new RTreeBoundary(60, 60, 10, 10),
-        3 => new RTreeBoundary(-70, 60, 10, 10),
-        4 => new RTreeBoundary(30, 40, 10, 10),
-        5 => new RTreeBoundary(-40, 40, 10, 10),
-        6 => new RTreeBoundary(90, 30, 10, 10),
-        7 => new RTreeBoundary(-100, 30, 10, 10),
-        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null)
-      };
-
-    // Act
-    var tree = new RTree<int>(items, BoundarySelector, options);
-    var root = tree.CreateTestView(tree.RootIndex);
-
-    Assert.False(root.IsLeaf);
-    Assert.Equal(1, root.ChildCount);
-
-    var wrapper = root.Child(0);
-    Assert.False(wrapper.IsLeaf);
-    Assert.Equal(2, wrapper.ChildCount);
-    Assert.Equal(new RTreeBoundary(-100, 30, 200, 60), wrapper.Boundary);
-
-    // Left side
-    var left = wrapper.Child(0);
-    Assert.False(left.IsLeaf);
-    Assert.Equal(2, left.ChildCount);
-    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), left.Boundary);
-
-    var leftUpper = left.Child(0);
-    Assert.False(leftUpper.IsLeaf);
-    Assert.Equal(2, leftUpper.ChildCount);
-    Assert.Equal(new RTreeBoundary(-100, 30, 70, 40), leftUpper.Boundary);
-
-    var leftUpperInner = leftUpper.Child(0);
-    Assert.False(leftUpperInner.IsLeaf);
-    Assert.Equal(2, leftUpperInner.ChildCount);
-    Assert.Equal(new RTreeBoundary(-100, 30, 70, 20), leftUpperInner.Boundary);
-    Assert.True(leftUpperInner.Child(0).IsLeaf); // 7
-    Assert.True(leftUpperInner.Child(1).IsLeaf); // 5
-
-    var leftUpperLower = leftUpper.Child(1);
-    Assert.False(leftUpperLower.IsLeaf);
-    Assert.Equal(1, leftUpperLower.ChildCount);
-    Assert.True(leftUpperLower.Child(0).IsLeaf); // 3
-
-    var leftLower = left.Child(1);
-    Assert.False(leftLower.IsLeaf);
-    Assert.Equal(1, leftLower.ChildCount);
-
-    var leftLowerInner = leftLower.Child(0);
-    Assert.False(leftLowerInner.IsLeaf);
-    Assert.Equal(1, leftLowerInner.ChildCount);
-    Assert.True(leftLowerInner.Child(0).IsLeaf); // 1
-
-    // Right side
-    var right = wrapper.Child(1);
-    Assert.False(right.IsLeaf);
-    Assert.Equal(1, right.ChildCount);
-    Assert.Equal(new RTreeBoundary(20, 30, 80, 60), right.Boundary);
-
-    var rightInner = right.Child(0);
-    Assert.False(rightInner.IsLeaf);
-    Assert.Equal(2, rightInner.ChildCount);
-
-    var rightUpper = rightInner.Child(0);
-    Assert.False(rightUpper.IsLeaf);
-    Assert.Equal(2, rightUpper.ChildCount);
-    Assert.True(rightUpper.Child(0).IsLeaf); // 6
-    Assert.True(rightUpper.Child(1).IsLeaf); // 2
-
-    var rightLower = rightInner.Child(1);
-    Assert.False(rightLower.IsLeaf);
-    Assert.Equal(2, rightLower.ChildCount);
-    Assert.True(rightLower.Child(0).IsLeaf); // 4
-    Assert.True(rightLower.Child(1).IsLeaf); // 0
-  }
-
-  [Fact]
-  public void Constructor_WithKnownDataMaxNodeSize3_InitialTreeStructureExpected()
-  {
-    // Arrange
-    var items = Enumerable.Range(0, 8).ToArray();
-    var options = new RTreeOptions { MaxEntriesPerNode = 3 };
-
-    RTreeBoundary BoundarySelector(int item)
-      => item switch
-      {
-        0 => new RTreeBoundary(20, 80, 10, 10),
-        1 => new RTreeBoundary(-30, 80, 10, 10),
-        2 => new RTreeBoundary(60, 60, 10, 10),
-        3 => new RTreeBoundary(-70, 60, 10, 10),
-        4 => new RTreeBoundary(30, 40, 10, 10),
-        5 => new RTreeBoundary(-40, 40, 10, 10),
-        6 => new RTreeBoundary(90, 30, 10, 10),
-        7 => new RTreeBoundary(-100, 30, 10, 10),
-        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null)
-      };
-
-    // Act
-    var tree = new RTree<int>(items, BoundarySelector, options);
-    var root = tree.CreateTestView(tree.RootIndex);
-
-    Assert.False(root.IsLeaf);
-    Assert.Equal(2, root.ChildCount);
-
-    // Left side: contains 7,5,3 (upper-left) and 1,0 (lower-left)
-    var left = root.Child(0);
-    Assert.False(left.IsLeaf);
-    Assert.Equal(2, left.ChildCount);
-    Assert.Equal(new RTreeBoundary(-100, 30, 130, 60), left.Boundary);
-
-    var leftUpper = left.Child(0);
-    Assert.False(leftUpper.IsLeaf);
-    Assert.Equal(3, leftUpper.ChildCount);
-    Assert.Equal(new RTreeBoundary(-100, 30, 70, 40), leftUpper.Boundary);
-    Assert.True(leftUpper.Child(0).IsLeaf);
-    Assert.True(leftUpper.Child(1).IsLeaf);
-    Assert.True(leftUpper.Child(2).IsLeaf);
-
-    var leftLower = left.Child(1);
-    Assert.False(leftLower.IsLeaf);
-    Assert.Equal(2, leftLower.ChildCount);
-    Assert.Equal(new RTreeBoundary(-30, 80, 60, 10), leftLower.Boundary);
-    Assert.True(leftLower.Child(0).IsLeaf);
-    Assert.True(leftLower.Child(1).IsLeaf);
-
-    // Right side: single group containing 6,4,2
-    var right = root.Child(1);
-    Assert.False(right.IsLeaf);
-    Assert.Equal(1, right.ChildCount);
-    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), right.Boundary);
-
-    var rightGroup = right.Child(0);
-    Assert.False(rightGroup.IsLeaf);
-    Assert.Equal(3, rightGroup.ChildCount);
-    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), rightGroup.Boundary);
-    Assert.True(rightGroup.Child(0).IsLeaf);
-    Assert.True(rightGroup.Child(1).IsLeaf);
-    Assert.True(rightGroup.Child(2).IsLeaf);
-  }
-
-  [Fact]
-  public void Constructor_WithKnownDataMaxNodeSize4_InitialTreeStructureExpected()
-  {
-    // Arrange
-    var items = Enumerable.Range(0, 8).ToArray();
-    var options = new RTreeOptions { MaxEntriesPerNode = 4 };
-
-    RTreeBoundary BoundarySelector(int item)
-      => item switch
-      {
-        0 => new RTreeBoundary(20, 80, 10, 10),
-        1 => new RTreeBoundary(-30, 80, 10, 10),
-        2 => new RTreeBoundary(60, 60, 10, 10),
-        3 => new RTreeBoundary(-70, 60, 10, 10),
-        4 => new RTreeBoundary(30, 40, 10, 10),
-        5 => new RTreeBoundary(-40, 40, 10, 10),
-        6 => new RTreeBoundary(90, 30, 10, 10),
-        7 => new RTreeBoundary(-100, 30, 10, 10),
-        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null)
-      };
-
-    // Act
-    var tree = new RTree<int>(items, BoundarySelector, options);
-    var root = tree.CreateTestView(tree.RootIndex);
-
-    Assert.False(root.IsLeaf);
-    Assert.Equal(3, root.ChildCount);
-
-    var left = root.Child(0);
-    Assert.False(left.IsLeaf);
-    Assert.Equal(4, left.ChildCount);
-    Assert.Equal(new RTreeBoundary(-100, 30, 80, 60), left.Boundary);
-    Assert.True(left.Child(0).IsLeaf);
-    Assert.True(left.Child(1).IsLeaf);
-    Assert.True(left.Child(2).IsLeaf);
-    Assert.True(left.Child(3).IsLeaf);
-
-    var middle = root.Child(1);
-    Assert.False(middle.IsLeaf);
-    Assert.Equal(1, middle.ChildCount);
-    Assert.Equal(new RTreeBoundary(20, 80, 10, 10), middle.Boundary);
-    Assert.True(middle.Child(0).IsLeaf);
-
-    var right = root.Child(2);
-    Assert.False(right.IsLeaf);
-    Assert.Equal(3, right.ChildCount);
-    Assert.Equal(new RTreeBoundary(30, 30, 70, 40), right.Boundary);
-    Assert.True(right.Child(0).IsLeaf);
-    Assert.True(right.Child(1).IsLeaf);
-    Assert.True(right.Child(2).IsLeaf);
   }
 
   [Fact]
