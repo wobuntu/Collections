@@ -899,6 +899,34 @@ public class RTreeTests
   }
 
   [Fact]
+  public void AddRange_EmptySpan_ReturnsZeroAndCountUnchanged()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1)) { 1, 2 };
+
+    // Act
+    var added = tree.AddRange([]);
+
+    // Assert
+    Assert.Equal(0, added);
+    Assert.Equal(2, tree.Count);
+  }
+
+  [Fact]
+  public void AddRange_WithNullElements_NullsSkippedAndCountExcludesNulls()
+  {
+    // Arrange
+    var tree = new RTree<string>(x => new RTreeBoundary(x.Length, 0, 1, 1));
+
+    // Act
+    var added = tree.AddRange(["a", null!, "b", null!, "c"]);
+
+    // Assert
+    Assert.Equal(3, added);
+    Assert.Equal(3, tree.Count);
+  }
+
+  [Fact]
   public void Clear_AfterAddingItems_ResetsTreeCompletely()
   {
     // Arrange
@@ -978,6 +1006,66 @@ public class RTreeTests
     Assert.Equal(50, bulkResults.Count);
   }
 
+  [Fact]
+  public void AddRange_ExactlyMaxEntriesPerNode_UsesSingleInsertPath()
+  {
+    // Arrange
+    // Items.Length == MaxEntriesPerNode, so Count == 0 && length > max yields false;
+    // Single-insert path is used.
+    var options = new RTreeOptions { MaxEntriesPerNode = 3 };
+    var items = Enumerable.Range(0, 3).ToArray();
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, 0, 5, 5), options);
+
+    // Act
+    var added = tree.AddRange(items);
+
+    // Assert
+    Assert.Equal(3, added);
+    Assert.Equal(3, tree.Count);
+
+    var results = new List<int>();
+    tree.QueryTo(new RTreeBoundary(-5, -5, 40, 15), results);
+    Assert.Equal(3, results.Count);
+  }
+
+  [Fact]
+  public void AddRange_MaxEntriesPerNodePlusOne_UsesBulkPath()
+  {
+    // Arrange
+    // Items.Length == MaxEntriesPerNode + 1, so Count == 0 && length > max yields true;
+    // Bulk path is used
+    var options = new RTreeOptions { MaxEntriesPerNode = 3 };
+    var items = Enumerable.Range(0, 4).ToArray();
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, 0, 5, 5), options);
+
+    // Act
+    var added = tree.AddRange(items);
+
+    // Assert
+    Assert.Equal(4, added);
+    Assert.Equal(4, tree.Count);
+
+    var results = new List<int>();
+    tree.QueryTo(new RTreeBoundary(-5, -5, 50, 15), results);
+    Assert.Equal(4, results.Count);
+  }
+
+  [Fact]
+  public void AddRange_BulkPathWithDuplicates_DuplicatesSkipped()
+  {
+    // Arrange
+    // MaxEntriesPerNode = 3, span length = 6, 6 > 3 on empty tree triggers bulk insert path
+    var options = new RTreeOptions { MaxEntriesPerNode = 3 };
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, 0, 5, 5), options);
+
+    // Act: items 2 and 3 appear twice
+    var added = tree.AddRange([1, 2, 3, 4, 2, 3]);
+
+    // Assert
+    Assert.Equal(4, added);
+    Assert.Equal(4, tree.Count);
+  }
+
   [Theory]
   [InlineData(2)]
   [InlineData(3)]
@@ -1029,6 +1117,20 @@ public class RTreeTests
     // Act / Assert
     Assert.False(tree.Add(null!));
     Assert.Empty(tree);
+  }
+
+  [Fact]
+  public void Add_Duplicate_ReturnsFalseAndCountUnchanged()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1)) { 1, 2 };
+
+    // Act
+    var result = tree.Add(1);
+
+    // Assert
+    Assert.False(result);
+    Assert.Equal(2, tree.Count);
   }
 
   [Fact]
