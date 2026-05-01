@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
 using System.Buffers;
@@ -23,12 +23,11 @@ namespace Wobuntu.Collections.Spatial;
 
 /// <summary>
 ///   Represents a modified sort-tile-recursive rectangle tree (STR-RTree).<br />
-///   Though the concept remains the same, this RTree implementation differs from a classical implementation by
+///   Though the concept remains the same, this RTree implementation differs from classical implementations by
 ///   optimizing on rectangle center distances over rectangle sizes and builds its tree not recursively, but
 ///   iteratively.<br />
 ///   Use this data structure to organize spatial data, which does not overlap heavily, is unevenly distributed,
-///   and varies in geometric size. Lookups and inserts for spatial regions is fast, removals are slightly
-///   slower.<br />
+///   and varies in geometric size.<br />
 ///   The tree is constructed bottom-up, starting at the data leafs. Initially, a data leaf is created for each
 ///   object, which also holds a boundary describing a rectangle in a geometric space. The boundary is used initially
 ///   to sort the nodes according to their X/Y coordinates. Based on a limit of maximum children of a parent node and
@@ -41,41 +40,30 @@ public class RTree<T>
   : IEnumerable<T>
   where T : notnull
 {
-  // Capacity constants to avoid unnecessary resize, especially during first queries:
-  private const int DefaultQueryResultMinCapacity = 64;
-  private const int DefaultQueryStackMinCapacity = 64;
-
-  // Cached delegates to avoid a heap allocation per Sort call in BuildSortTileRecursiveTree.
-  // Static lambdas on a generic class are per-instantiation, which is exactly what we need here.
-  private static readonly Comparison<RTreeNode<T>> CompareByCenterX =
-    static (left, right) => left.Boundary.CenterX.CompareTo(right.Boundary.CenterX);
-
-  private static readonly Comparison<RTreeNode<T>> CompareByCenterY =
-    static (left, right) => left.Boundary.CenterY.CompareTo(right.Boundary.CenterY);
-
-  private readonly Stack<RTreeNode<T>> _queryStack;
-
-  private readonly Dictionary<T, RTreeNode<T>> _itemToNode;
-
-  private readonly int _recycledLeafNodeCapacity;
-  private int _recycledLeafNodeCount;
-  private RTreeNode<T>[]? _recycledLeafNodes;
-
-  private readonly int _recycledNonLeafNodeCapacity;
-  private int _recycledNonLeafNodeCount;
-  private RTreeNode<T>[]? _recycledNonLeafNodes;
+  private readonly Stack<int> _queryStack;
+  private readonly Dictionary<T, int> _itemToNodeIndex;
 
   private readonly Func<T, RTreeBoundary> _boundarySelector;
-  private readonly int _maxEntriesPerNode;
-  private readonly int _minEntriesPerNode;
+
   private readonly double _updateViewportItemsOnShrinkThreshold;
   private readonly double _leafNodeVirtualFullness;
 
-  private RTreeBoundary _viewport;
-  private RTreeBoundary _actualViewport;
   private readonly SynchronizedObservableOrderedSet<T> _viewportItems;
 
-  internal RTreeNode<T> Root; // Internal for access in UTests
+  private int _nodeCount;
+
+  private int _childReferencesCount;
+  private int _freeChildBlockHead = RTreeNode<T>.NullIndex;
+
+  private RTreeBoundary _viewport;
+  private RTreeBoundary _actualViewport;
+
+  internal int RootIndex; // Internal for tests.
+  internal readonly int MaxEntriesPerNode;
+  internal readonly int MinEntriesPerNode;
+  internal int FreeNodeHead = RTreeNode<T>.NullIndex;
+  internal RTreeNode<T>[] Nodes;
+  internal RTreeNodeReference[] ChildReferences;
 
   public RTree(Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
     : this(options ?? new RTreeOptions(), boundarySelector) { }
@@ -91,29 +79,29 @@ public class RTree<T>
     ArgumentNullException.ThrowIfNull(boundarySelector);
 
     _boundarySelector = boundarySelector;
-    _maxEntriesPerNode = options.MaxEntriesPerNode;
-    _minEntriesPerNode = options.MinEntriesPerNode;
+    MaxEntriesPerNode = options.MaxEntriesPerNode;
+    MinEntriesPerNode = options.MinEntriesPerNode;
     _updateViewportItemsOnShrinkThreshold = options.UpdateViewportItemsOnShrinkThreshold;
 
     // The following will choose a virtual fullness of leaf nodes, somewhere between the minimum and maximum amount
     // of nodes. This will make choosing a node for dynamic insert (= not during bulk initialize) fairer. If we treated
     // leaf nodes as being empty, they would always be picked if on the same level as non-leaf nodes for insert, which
     // would cause massive overlaps of RTreeNodes.
-    _leafNodeVirtualFullness = (_maxEntriesPerNode - _minEntriesPerNode) / (double)_maxEntriesPerNode;
+    _leafNodeVirtualFullness = (MaxEntriesPerNode - MinEntriesPerNode) / (double)MaxEntriesPerNode;
 
-    _itemToNode = new Dictionary<T, RTreeNode<T>>();
-    _queryStack = new Stack<RTreeNode<T>>(DefaultQueryStackMinCapacity);
-    _viewportItems = new SynchronizedObservableOrderedSet<T>(DefaultQueryResultMinCapacity);
+    _itemToNodeIndex = new Dictionary<T, int>(options.InitialNodeCapacity);
+    _queryStack = new Stack<int>(options.InitialQueryStackCapacity);
+    _viewportItems = new SynchronizedObservableOrderedSet<T>(options.InitialViewportItemsCapacity);
 
-    _recycledLeafNodeCapacity = options.RecycledLeafNodeCapacity;
-    _recycledNonLeafNodeCapacity = options.RecycledNonLeafNodeCapacity;
+    Nodes = new RTreeNode<T>[options.InitialNodeCapacity];
+    ChildReferences = new RTreeNodeReference[options.InitialChildBlockCapacity * MaxEntriesPerNode];
 
-    Root = RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
+    RootIndex = RTreeNode<T>.AllocateNonLeaf(this).OwnIndex;
   }
 
-  public int Count => _itemToNode.Count;
+  public int Count => _itemToNodeIndex.Count;
 
-  public RTreeBoundary Boundary => Root.Boundary;
+  public RTreeBoundary Boundary => Nodes[RootIndex].Boundary;
 
   public RTreeBoundary Viewport
   {
@@ -170,24 +158,27 @@ public class RTree<T>
       return false;
     }
 
-    var node = CreateLeaf(item, _boundarySelector(item));
-    if (!_itemToNode.TryAdd(item, node))
+    var boundary = _boundarySelector(item);
+    ref var node = ref RTreeNode<T>.AllocateLeaf(this, item, boundary);
+
+    if (!_itemToNodeIndex.TryAdd(item, node.OwnIndex))
     {
+      RTreeNode<T>.Free(this, ref node);
       return false;
     }
 
-    InsertNode(node);
+    InsertNode(ref node);
     return true;
   }
 
   public int AddRange(Span<T> items)
   {
-    if (Count == 0 && items.Length > _maxEntriesPerNode)
+    if (Count == 0 && items.Length > MaxEntriesPerNode)
     {
       return BulkInitialize(items);
     }
 
-    var previousCount = _itemToNode.Count;
+    var previousCount = _itemToNodeIndex.Count;
     for (var index = 0; index < items.Length; index++)
     {
       var item = items[index];
@@ -197,55 +188,62 @@ public class RTree<T>
         continue;
       }
 
-      var node = CreateLeaf(item, _boundarySelector(item));
+      var boundary = _boundarySelector(item);
+      ref var node = ref RTreeNode<T>.AllocateLeaf(this, item, boundary);
 
-      if (!_itemToNode.TryAdd(item, node))
+      if (!_itemToNodeIndex.TryAdd(item, node.OwnIndex))
       {
+        RTreeNode<T>.Free(this, ref node);
         continue;
       }
 
-      InsertNode(node);
+      InsertNode(ref node);
     }
 
-    return _itemToNode.Count - previousCount;
+    return _itemToNodeIndex.Count - previousCount;
   }
 
   public bool Remove(T item)
   {
-    if (item == null! || !_itemToNode.TryGetValue(item, out var node))
+    if (item == null! || !_itemToNodeIndex.TryGetValue(item, out var nodeIndex))
     {
       return false;
     }
 
-    if (node == Root)
+    if (nodeIndex == RootIndex)
     {
-      _viewportItems.Remove(node.Data!);
-      _itemToNode.Remove(item);
+      ref var oldRoot = ref Nodes[nodeIndex];
+      _viewportItems.Remove(oldRoot.Data!);
+      _itemToNodeIndex.Remove(item);
+      RTreeNode<T>.Free(this, ref oldRoot);
 
-      var oldRoot = Root;
-      Root = CreateNonLeaf();
-
-      RecycleNode(oldRoot);
+      ref readonly var newRoot = ref RTreeNode<T>.AllocateNonLeaf(this);
+      RootIndex = newRoot.OwnIndex;
 
       return true;
     }
 
-    if (!RemoveNode(node))
+    if (!RemoveNode(nodeIndex))
     {
       return false;
     }
 
-    _itemToNode.Remove(item);
+    _itemToNodeIndex.Remove(item);
 
-    if (Root is { Children.Count: 1, IsLeaf: false })
+    ref var oldRootNode = ref Nodes[RootIndex];
+    if (oldRootNode.ChildrenCount != 1)
     {
-      var oldRoot = Root;
-      Root = Root.Children[0];
-      Root.Parent = null;
-
-      RecycleNode(oldRoot);
+      return true;
     }
 
+    // Remove the current root layer and replace it by its child.
+    ref readonly var newRootReference = ref ChildReferences[oldRootNode.FirstChildReferenceIndex];
+    RootIndex = newRootReference.NodeIndex;
+
+    ref var newRootNode = ref Nodes[RootIndex];
+    newRootNode.ParentIndex = RTreeNode<T>.NullIndex;
+
+    RTreeNode<T>.Free(this, ref oldRootNode);
     return true;
   }
 
@@ -254,40 +252,59 @@ public class RTree<T>
     ArgumentNullException.ThrowIfNull(items);
     foreach (var item in items)
     {
-      if (item == null! || !_itemToNode.TryGetValue(item, out var node))
+      if (item == null! || !_itemToNodeIndex.TryGetValue(item, out var nodeIndex))
       {
         continue;
       }
 
-      if (node == Root)
+      if (nodeIndex == RootIndex)
       {
+        ref var node = ref Nodes[nodeIndex];
+        Debug.Assert(node.IsLeaf);
+
         _viewportItems.Remove(node.Data!);
-        _itemToNode.Remove(item);
-        Root = CreateNonLeaf();
+        _itemToNodeIndex.Remove(item);
+        RTreeNode<T>.Free(this, ref node);
+
+        RootIndex = RTreeNode<T>.AllocateNonLeaf(this).OwnIndex;
+
+        Debug.Assert(_itemToNodeIndex.Count == 0, "If the root is a data leaf, then no more data can exist.");
         continue;
       }
 
-      if (!RemoveNode(node))
+      if (!RemoveNode(nodeIndex))
       {
         continue;
       }
 
-      _itemToNode.Remove(item);
+      _itemToNodeIndex.Remove(item);
 
-      if (Root is { Children.Count: 1, IsLeaf: false })
+      ref var oldRoot = ref Nodes[RootIndex];
+      if (oldRoot.ChildrenCount != 1)
       {
-        Root = Root.Children[0];
-        Root.Parent = null;
+        continue;
       }
+
+      ref readonly var newRootReference = ref ChildReferences[oldRoot.FirstChildReferenceIndex];
+      RootIndex = newRootReference.NodeIndex;
+      ref var newRoot = ref Nodes[RootIndex];
+      newRoot.ParentIndex = RTreeNode<T>.NullIndex;
+
+      RTreeNode<T>.Free(this, ref oldRoot);
     }
   }
 
   public void Clear()
   {
-    // Note that items removed via Clear are not recycled, to not give up O(1) complexity for caching old
     ResetViewportItems();
-    Root = CreateNonLeaf();
-    _itemToNode.Clear();
+
+    _nodeCount = 0;
+    _childReferencesCount = 0;
+    FreeNodeHead = RTreeNode<T>.NullIndex;
+    _freeChildBlockHead = RTreeNode<T>.NullIndex;
+
+    RootIndex = RTreeNode<T>.AllocateNonLeaf(this).OwnIndex;
+    _itemToNodeIndex.Clear();
   }
 
   /// <summary>
@@ -307,40 +324,46 @@ public class RTree<T>
   {
     ArgumentNullException.ThrowIfNull(targetCollection);
 
-    if (!Root.Boundary.Intersects(searchBoundary))
+    ref readonly var root = ref Nodes[RootIndex];
+    if (!root.Boundary.Intersects(searchBoundary))
     {
       return 0;
     }
 
     var count = 0;
-    _queryStack.Push(Root);
+    _queryStack.Push(RootIndex);
 
-    // The stack will only hold nodes, which are within the search boundary.
+    // The stack will only hold node indices, which are within the search boundary.
     while (_queryStack.Count > 0)
     {
-      var current = _queryStack.Pop();
+      var currentIndex = _queryStack.Pop();
+      ref readonly var current = ref Nodes[currentIndex];
+
       if (current.IsLeaf)
       {
-        targetCollection.Add(current.Data);
+        targetCollection.Add(current.Data!);
         count++;
         continue;
       }
 
-      var children = CollectionsMarshal.AsSpan(current.Children);
-      for (var index = 0; index < children.Length; index++)
-      {
-        var child = children[index];
-        var childBoundary = child.Boundary;
+      var childReferencesOffset = current.FirstChildReferenceIndex;
+      var childrenCount = current.ChildrenCount;
 
-        if (searchBoundary.ContainsUnchecked(in childBoundary))
+      for (var index = 0; index < childrenCount; index++)
+      {
+        ref readonly var childReference = ref ChildReferences[childReferencesOffset + index];
+
+        if (searchBoundary.ContainsUnchecked(in childReference.Boundary))
         {
           // In case of containment, add children directly without bound checks.
           var offset = _queryStack.Count;
-          _queryStack.Push(child);
+          _queryStack.Push(childReference.NodeIndex);
 
           while (_queryStack.Count > offset)
           {
-            var contained = _queryStack.Pop();
+            var containedIndex = _queryStack.Pop();
+            ref readonly var contained = ref Nodes[containedIndex];
+
             if (contained.IsLeaf)
             {
               targetCollection.Add(contained.Data);
@@ -348,19 +371,22 @@ public class RTree<T>
               continue;
             }
 
-            var containedChildren = CollectionsMarshal.AsSpan(contained.Children);
-            for (var containedIndex = 0; containedIndex < containedChildren.Length; containedIndex++)
+            var containedChildReferencesOffset = contained.FirstChildReferenceIndex;
+            var containedChildrenCount = contained.ChildrenCount;
+
+            for (var childIndex = 0; childIndex < containedChildrenCount; childIndex++)
             {
-              _queryStack.Push(containedChildren[containedIndex]);
+              var childNodeIndex = ChildReferences[containedChildReferencesOffset + childIndex].NodeIndex;
+              _queryStack.Push(childNodeIndex);
             }
           }
 
           continue;
         }
 
-        if (searchBoundary.IntersectsUnchecked(in childBoundary))
+        if (searchBoundary.IntersectsUnchecked(in childReference.Boundary))
         {
-          _queryStack.Push(child);
+          _queryStack.Push(childReference.NodeIndex);
         }
       }
     }
@@ -368,57 +394,65 @@ public class RTree<T>
     return count;
   }
 
-  public bool Contains(T item) => item != null! && _itemToNode.ContainsKey(item);
+  public bool Contains(T item) => item != null! && _itemToNodeIndex.ContainsKey(item);
 
   public IEnumerator<T> GetEnumerator()
   {
-    // ReSharper disable once ForeachCanBeConvertedToQueryUsingAnotherGetEnumerator
-    foreach (var item in _itemToNode)
+    foreach (var (_, index) in _itemToNodeIndex)
     {
-      yield return item.Value.Data!;
+      yield return Nodes[index].Data!;
     }
   }
 
   IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-  internal RTreeNode<T> ChooseInsertParent(RTreeBoundary itemBoundary)
+  internal int ChooseInsertParent(RTreeBoundary itemBoundary)
   {
-    // Note: Internal for tests
-    var node = Root;
-    if (node.RemainingCapacity > 0)
+    // Note: Method internal for tests
+    var nodeIndex = RootIndex;
+    ref var node = ref Nodes[nodeIndex];
+
+    if (node.HasRemainingCapacity(MaxEntriesPerNode))
     {
       // If the root has capacity, always insert into it.
-      return node;
+      return nodeIndex;
     }
 
     var (centerX, centerY) = (itemBoundary.CenterX, itemBoundary.CenterY);
 
     // Iterate over all children of the current node, find the best one, then repeat using the selected node again.
     // Do so, until the best candidate for insert is found.
-    var bestCandidate = node;
+    var bestCandidateIndex = nodeIndex;
     var totalMinDistance = double.MaxValue;
 
     while (true)
     {
-      if (node.IsLeaf)
+      ref readonly var current = ref Nodes[nodeIndex];
+      if (current.IsLeaf)
       {
         break;
       }
 
-      RTreeNode<T>? closestChild = null;
+      var childrenCount = current.ChildrenCount;
+      var closestChildIndex = RTreeNode<T>.NullIndex;
       var currentMinDistance = double.MaxValue;
+      var childReferenceOffset = current.FirstChildReferenceIndex;
 
-      for (var index = 0; index < node.Children.Count; index++)
+      for (var index = 0; index < childrenCount; index++)
       {
-        var child = node.Children[index];
-        var boundary = child.Boundary;
-        var (childX, childY) = (boundary.CenterX, boundary.CenterY);
+        // Read boundary from the cached child references, avoids chasing into _nodes for each
+        // child and causing page misses.
+        ref readonly var childReference = ref ChildReferences[childReferenceOffset + index];
+        ref readonly var boundary = ref childReference.Boundary;
 
+        var (childX, childY) = (boundary.CenterX, boundary.CenterY);
         var diffX = centerX - childX;
         var diffY = centerY - childY;
 
         var distanceSquared = diffX * diffX + diffY * diffY;
-        var fullness = child.IsLeaf ? _leafNodeVirtualFullness : (float)child.Children.Count / _maxEntriesPerNode;
+
+        ref readonly var child = ref Nodes[childReference.NodeIndex];
+        var fullness = child.IsLeaf ? _leafNodeVirtualFullness : (float)child.ChildrenCount / MaxEntriesPerNode;
         // The non-linear penalty factor for fullness of nodes below causes better distribution of leafs across
         // branches. If we would not take this into account, inserting new nodes at a similar location would
         // form single but very deep branches, as always just the nearest is selected and a new parent would be
@@ -429,80 +463,94 @@ public class RTree<T>
         if (weightedDistance < currentMinDistance)
         {
           currentMinDistance = weightedDistance;
-          closestChild = child;
+          closestChildIndex = childReference.NodeIndex;
         }
       }
 
-      if (closestChild == null)
+      if (closestChildIndex == RTreeNode<T>.NullIndex)
       {
-        Debug.Fail("It should always be possible to select a node for insertion, could only happen if a node without "
-                   + "any children was found, which should be impossible for IsLeaf = false (except for Root, which"
-                   + " also should not reach this.");
+        Debug.Fail("It should always be possible to select a node for insertion. This could only happen if a node "
+                   + "without any children was found, which should be impossible for non-leaf nodes"
+                   + "(except for Root, which also should not reach this.");
         continue;
       }
 
-      if (closestChild.RemainingCapacity > 0)
+      if (Nodes[closestChildIndex].HasRemainingCapacity(MaxEntriesPerNode))
       {
         // Insert early, don't iterate down the bottom.
-        return closestChild;
+        return closestChildIndex;
       }
 
       if (currentMinDistance < totalMinDistance)
       {
         totalMinDistance = currentMinDistance;
-        bestCandidate = closestChild;
+        bestCandidateIndex = closestChildIndex;
       }
 
-      node = closestChild;
+      nodeIndex = closestChildIndex;
     }
 
-    return bestCandidate;
+    return bestCandidateIndex;
   }
 
-  private void InsertNode(RTreeNode<T> item)
+  private void InsertNode(ref RTreeNode<T> node)
   {
-    var targetNode = ChooseInsertParent(item.Boundary);
+    var nodeIndex = node.OwnIndex;
+    var targetIndex = ChooseInsertParent(node.Boundary);
+    ref var targetNode = ref Nodes[targetIndex];
+
     if (targetNode.IsLeaf)
     {
-      if (targetNode == Root)
+      if (targetIndex == RootIndex)
       {
-        targetNode = targetNode.InsertParentLayer(_maxEntriesPerNode);
-        Root = targetNode;
+        targetNode = ref RTreeNode<T>.InsertParentLayer(this, ref targetNode);
+        targetIndex = targetNode.OwnIndex;
+        RootIndex = targetIndex;
       }
       else
       {
-        var parent = targetNode.Parent!;
-        if (parent.RemainingCapacity > 0)
+        var targetParentIndex = targetNode.ParentIndex;
+        Debug.Assert(targetParentIndex >= 0);
+
+        ref var targetParentNode = ref Nodes[targetParentIndex];
+        if (targetParentNode.HasRemainingCapacity(MaxEntriesPerNode))
         {
-          targetNode = parent;
+          // The parent of the selected insert-leaf has space available, so set that node as the target for insert.
+          targetIndex = targetParentIndex;
+          targetNode = ref Nodes[targetIndex];
         }
         else
         {
-          RebalanceBranch(parent);
+          RTreeNode<T>.RebalanceBranch(this, ref targetParentNode);
 
           // After rebalancing, check for a more suitable candidate (e.g. a node which has only a few items)
-          targetNode = ChooseInsertParent(item.Boundary);
+          targetIndex = ChooseInsertParent(node.Boundary);
+          targetNode = ref Nodes[targetIndex];
+
           if (targetNode.IsLeaf)
           {
             // If a leaf is again returned, then most likely the same node had been returned and the parent of
             // it has still no capacity. In this case, fall back to inserting a direct parent layer.
-            targetNode = targetNode.InsertParentLayer(_maxEntriesPerNode);
+            targetNode = ref RTreeNode<T>.InsertParentLayer(this, ref targetNode);
           }
         }
       }
     }
-    else if (targetNode != Root)
+    else if (targetIndex != RootIndex)
     {
       Debug.Assert(
-        targetNode.RemainingCapacity > 0,
-        "ChooseInsertParent should have returned a node with capacity available.");
+        targetNode.HasRemainingCapacity(MaxEntriesPerNode),
+        "ChooseInsertParent should have returned a node with capacity.");
     }
 
-    targetNode.AddChildDirect(item);
+    // Allocations of nodes may have resized the underlying array, hence the node may point to an outdated reference.
+    // Hence, refetch the node to insert, which may no longer be valid.
+    node = ref Nodes[nodeIndex];
+    targetNode.AddChildDirect(this, ref node);
 
     if (!_actualViewport.IsEmpty)
     {
-      AddNewIntersectingViewportItems(_actualViewport, item);
+      AddNewIntersectingViewportItems(_actualViewport, node.OwnIndex);
     }
 
     // Note: Classical RTree implementations would now check if the node is overfull, split it if necessary and
@@ -511,22 +559,19 @@ public class RTree<T>
     // Here, nodes can never become overfull.
   }
 
-  private bool RemoveNode(RTreeNode<T> toRemove)
+  private bool RemoveNode(int toRemoveIndex)
   {
-    var parent = toRemove.Parent;
-    if (parent == null)
+    ref var toRemove = ref Nodes[toRemoveIndex];
+    var parentIndex = toRemove.ParentIndex;
+
+    if (parentIndex < 0)
     {
       Debug.Fail("This could only occur if Remove is called on a detached node or the root.");
       return false;
     }
 
-    if (parent.IsLeaf)
-    {
-      Debug.Fail("A node holding other children must not be marked as a data leaf.");
-      return false;
-    }
-
-    parent.RemoveChildDirect(toRemove);
+    ref var parent = ref Nodes[parentIndex];
+    parent.RemoveChildDirect(this, toRemoveIndex);
 
     if (toRemove.IsLeaf)
     {
@@ -536,81 +581,122 @@ public class RTree<T>
         Debug.Assert(actuallyRemoved);
       }
 
-      parent = MoveChildrenToParentIfCapacityAvailable(parent);
-      RemoveUnderfullFromAncestorNodes(parent);
+      parentIndex = MoveChildrenToParentIfCapacityAvailable(parentIndex);
+      RemoveUnderfullFromAncestorNodes(parentIndex);
 
-      RecycleNode(toRemove);
+      RTreeNode<T>.Free(this, ref toRemove);
       return true;
     }
 
-    if (parent.RemainingCapacity >= toRemove.Children.Count)
+    // The array may have been resized during reinserting children, hence refetch the possibly outdated reference.
+    parent = ref Nodes[parentIndex];
+    var childCount = toRemove.ChildrenCount;
+
+    // Removing a non-leaf: re-attach its children:
+    if (parent.GetRemainingCapacity(MaxEntriesPerNode) >= childCount)
     {
-      for (var index = 0; index < toRemove.Children.Count; index++)
+      // Parent has enough space to adopt our children, populate it directly:
+      for (var index = 0; index < childCount; index++)
       {
-        var child = toRemove.Children[index];
-        parent.AddChildDirect(child);
+        var childReferenceIndex = toRemove.FirstChildReferenceIndex + index;
+        var childNodeIndex = ChildReferences[childReferenceIndex].NodeIndex;
+
+        ref var child = ref Nodes[childNodeIndex];
+        parent.AddChildDirect(this, ref child);
       }
 
-      RecycleNode(toRemove);
+      toRemove.ChildrenCount = 0; // Reset before freeing to avoid double-detach
+      RTreeNode<T>.Free(this, ref toRemove);
       return true;
     }
 
-    for (var index = 0; index < toRemove.Children.Count; index++)
+    // Not enough space in parent available, add what fits, re-insert the rest.
+    // Store the child offset here, as the reference to toRemove could become invalid on Array resize for InsertNode.
+    var childReferenceOffset = toRemove.FirstChildReferenceIndex;
+    for (var index = 0; index < childCount; index++)
     {
-      var child = toRemove.Children[index];
-      if (parent.RemainingCapacity > 0)
+      var childIndex = ChildReferences[childReferenceOffset + index].NodeIndex;
+      ref var child = ref Nodes[childIndex];
+      child.ParentIndex = RTreeNode<T>.NullIndex;
+
+      if (parent.HasRemainingCapacity(MaxEntriesPerNode))
       {
-        parent.AddChildDirect(child);
+        parent.AddChildDirect(this, ref child);
       }
       else
       {
-        InsertNode(child);
+        InsertNode(ref child);
+        // InsertNode could reallocate the array and invalidate existing node references, hence refetch here.
+        toRemove = ref Nodes[toRemoveIndex];
+        parent = ref Nodes[parentIndex];
       }
     }
 
-    RecycleNode(toRemove);
-    RemoveUnderfullFromAncestorNodes(parent);
+    toRemove.ChildrenCount = 0; // Reset before freeing to avoid double-detach
+    RTreeNode<T>.Free(this, ref toRemove);
+    RemoveUnderfullFromAncestorNodes(parentIndex);
 
     return true;
   }
 
-  private void RemoveUnderfullFromAncestorNodes(RTreeNode<T> node)
+  private void RemoveUnderfullFromAncestorNodes(int nodeIndex)
   {
-    var current = node;
-    while (current is { Children: { } children, Parent: { } parent }
-           && children.Count < _minEntriesPerNode)
+    var currentIndex = nodeIndex;
+    while (currentIndex >= 0)
     {
-      Debug.Assert(!current.IsLeaf);
-      Debug.Assert(!parent.IsLeaf);
-
-      parent.RemoveChildDirect(current); // This could cause the parent to become underfull as well, hence the loop.
-
-      if (parent.RemainingCapacity >= current.Children.Count)
+      ref var current = ref Nodes[currentIndex];
+      if (current.IsLeaf || current.ParentIndex < 0)
       {
-        for (var index = 0; index < current.Children.Count; index++)
+        break;
+      }
+
+      if (current.ChildrenCount >= MinEntriesPerNode)
+      {
+        break;
+      }
+
+      var parentIndex = current.ParentIndex;
+
+      ref var parent = ref Nodes[parentIndex];
+      parent.RemoveChildDirect(this, currentIndex);
+
+      var childReferenceOffset = current.FirstChildReferenceIndex;
+      var childCount = current.ChildrenCount;
+
+      if (Nodes[parentIndex].GetRemainingCapacity(MaxEntriesPerNode) >= childCount)
+      {
+        for (var index = 0; index < childCount; index++)
         {
-          var child = current.Children[index];
-          parent.AddChildDirect(child);
+          var childIndex = ChildReferences[childReferenceOffset + index].NodeIndex;
+          ref var child = ref Nodes[childIndex];
+          parent.AddChildDirect(this, ref child);
         }
       }
       else
       {
-        for (var index = 0; index < current.Children.Count; index++)
+        for (var index = 0; index < childCount; index++)
         {
-          var child = current.Children[index];
-          if (parent.RemainingCapacity > 0)
+          var childIndex = ChildReferences[childReferenceOffset + index].NodeIndex;
+          Nodes[childIndex].ParentIndex = RTreeNode<T>.NullIndex;
+          ref var child = ref Nodes[childIndex];
+
+          if (Nodes[parentIndex].HasRemainingCapacity(MaxEntriesPerNode))
           {
-            parent.AddChildDirect(child);
+            parent.AddChildDirect(this, ref child);
           }
           else
           {
-            InsertNode(child);
+            InsertNode(ref child);
+            // InsertNode could reallocate the array and invalidate existing node references, hence refetch here.
+            current = ref Nodes[currentIndex];
+            parent = ref Nodes[parentIndex];
           }
         }
       }
 
-      RecycleNode(current);
-      current = parent;
+      current.ChildrenCount = 0; // Reset before freeing to avoid double-detach
+      RTreeNode<T>.Free(this, ref current);
+      currentIndex = parentIndex;
     }
   }
 
@@ -621,7 +707,21 @@ public class RTree<T>
       return 0;
     }
 
-    var array = ArrayPool<RTreeNode<T>>.Shared.Rent(items.Length);
+    // Pre-size arenas to avoid repeated resizing during bulk load.
+    // Estimate: N leaf nodes + ~N/maxEntries non-leaf nodes (geometric series ~= N/(maxEntries-1)).
+    var estimatedNonLeafNodes = items.Length / Math.Max(MaxEntriesPerNode - 1, 1) + 1;
+    var estimatedTotalNodes = items.Length + estimatedNonLeafNodes + 1;
+    if (estimatedTotalNodes > Nodes.Length)
+    {
+      Array.Resize(ref Nodes, estimatedTotalNodes);
+    }
+
+    if (estimatedNonLeafNodes > ChildReferences.Length / MaxEntriesPerNode)
+    {
+      Array.Resize(ref ChildReferences, estimatedNonLeafNodes * MaxEntriesPerNode);
+    }
+
+    var indices = ArrayPool<int>.Shared.Rent(items.Length);
 
     try
     {
@@ -635,67 +735,44 @@ public class RTree<T>
           continue;
         }
 
-        var node = CreateLeaf(item, _boundarySelector(item));
+        ref var node = ref RTreeNode<T>.AllocateLeaf(this, item, _boundarySelector(item));
 
-        if (!_itemToNode.TryAdd(item, node))
+        if (!_itemToNodeIndex.TryAdd(item, node.OwnIndex))
         {
+          RTreeNode<T>.Free(this, ref node);
           skipped++;
           continue;
         }
 
-        array[index - skipped] = node;
+        indices[index - skipped] = node.OwnIndex;
       }
 
-      Root = CreateNonLeaf();
+      ref readonly var root = ref RTreeNode<T>.AllocateNonLeaf(this);
+      RootIndex = root.OwnIndex;
+
       var length = items.Length - skipped;
-      BuildSortTileRecursiveTree(Root, array.AsSpan()[..length]);
+      BuildSortTileRecursiveTree(RootIndex, indices.AsSpan(0, length));
 
       return length;
     }
     finally
     {
-      ArrayPool<RTreeNode<T>>.Shared.Return(array, true);
+      ArrayPool<int>.Shared.Return(indices, true);
     }
   }
 
-  private void RebalanceBranch(RTreeNode<T> branchRoot)
+  internal void BuildSortTileRecursiveTree(int rootIndex, Span<int> nodeIndices)
   {
-    Debug.Assert(!branchRoot.IsLeaf, "Must not be called on data leafs.");
-
-    // Only collect direct children — do NOT recurse into sub-branches.
-    // Recursing would make each rebalance O(subtree size), causing O(n^2) total cost on sequential inserts.
-    var originalChildren = branchRoot.Children;
-    var originalLength = originalChildren.Count;
-    var nodes = ArrayPool<RTreeNode<T>>.Shared.Rent(originalLength);
-    var nodesAsSpan = nodes.AsSpan(0, originalLength);
-
-    var originalAsSpan = CollectionsMarshal.AsSpan(originalChildren);
-    originalAsSpan.CopyTo(nodesAsSpan);
-
-    // For restoring the parent relationship after Reset().
-    var parent = branchRoot.Parent;
-
-    // Setting the property before Reset(), to notify the parent as well.
-    // The correct number will be restored by BuildSortTileRecursiveTree().
-    branchRoot.ChildrenVisibleInViewport = 0;
-
-    branchRoot.Reset();
-    branchRoot.Parent = parent;
-
-    BuildSortTileRecursiveTree(branchRoot, nodesAsSpan);
-    ArrayPool<RTreeNode<T>>.Shared.Return(nodes, true);
-  }
-
-  private void BuildSortTileRecursiveTree(RTreeNode<T> root, Span<RTreeNode<T>> nodes)
-  {
-    Debug.Assert(!root.IsLeaf, "Must not be called on data leafs.");
-    Debug.Assert(root.Children.Count == 0, "The passed root must be empty.");
+    Debug.Assert(!Nodes[rootIndex].IsLeaf, "Must not be called on leaf nodes.");
+    Debug.Assert(Nodes[rootIndex].ChildrenCount == 0, "The passed root must be empty.");
 
     while (true)
     {
-      if (nodes.Length + 1 <= _maxEntriesPerNode) // +1 to ensure at least one extra item can fit (for rebalance).
+      // +1 to ensure at least one extra item can fit (for rebalance and less re-allocation).
+      if (nodeIndices.Length + 1 <= MaxEntriesPerNode)
       {
-        root.AddChildrenDirect(nodes);
+        ref var root = ref Nodes[rootIndex];
+        root.AddChildrenDirect(this, nodeIndices);
         return;
       }
 
@@ -723,31 +800,57 @@ public class RTree<T>
       //     - Less than the maximum amount: create a root node, push them as children in there
       //     - Otherwise: Start over but use this time the created parent nodes to create parents for them
 
-      double nodesLength = nodes.Length + 1; // Just to ensure at least one extra item can already fit (for rebalance).
-      var parentNodeCount = (int)Math.Ceiling(nodesLength / _maxEntriesPerNode);
+      double nodesLength = nodeIndices.Length + 1; // Just to ensure at least one extra item can already fit (for rebalance).
+      var parentNodeCount = (int)Math.Ceiling(nodesLength / MaxEntriesPerNode);
       var sliceCount = (int)Math.Ceiling(Math.Sqrt(parentNodeCount));
       var sliceSize = (int)Math.Ceiling(nodesLength / sliceCount);
 
-      nodes.Sort(CompareByCenterX);
-      var parentNodes = new List<RTreeNode<T>>(parentNodeCount);
+      SortIndicesByCenter(nodeIndices, true);
+      var parentIndices = new List<int>(parentNodeCount);
 
-      for (var nodeIndex = 0; nodeIndex < nodes.Length; nodeIndex += sliceSize)
+      for (var nodeIndex = 0; nodeIndex < nodeIndices.Length; nodeIndex += sliceSize)
       {
-        var slice = nodes.Slice(nodeIndex, Math.Min(sliceSize, nodes.Length - nodeIndex));
-        slice.Sort(CompareByCenterY);
+        var slice = nodeIndices.Slice(nodeIndex, Math.Min(sliceSize, nodeIndices.Length - nodeIndex));
+        SortIndicesByCenter(slice, false); // Sort slice by CenterY
 
-        for (var sliceIndex = 0; sliceIndex < slice.Length; sliceIndex += _maxEntriesPerNode)
+        for (var sliceIndex = 0; sliceIndex < slice.Length; sliceIndex += MaxEntriesPerNode)
         {
-          var sliceNodes = slice.Slice(sliceIndex, Math.Min(_maxEntriesPerNode, slice.Length - sliceIndex));
-          var sliceParent = CreateNonLeaf();
+          var sliceNodes = slice.Slice(sliceIndex, Math.Min(MaxEntriesPerNode, slice.Length - sliceIndex));
+          ref var sliceParent = ref RTreeNode<T>.AllocateNonLeaf(this);
 
-          sliceParent.AddChildrenDirect(sliceNodes);
-          parentNodes.Add(sliceParent);
+          sliceParent.AddChildrenDirect(this, sliceNodes);
+          parentIndices.Add(sliceParent.OwnIndex);
         }
       }
 
-      nodes = CollectionsMarshal.AsSpan(parentNodes);
+      nodeIndices = CollectionsMarshal.AsSpan(parentIndices);
     }
+  }
+
+  private void SortIndicesByCenter(Span<int> indices, bool byX)
+  {
+    // Use a keys array for Span.Sort(keys, items) — sort keys, items follow along
+    var keys = ArrayPool<float>.Shared.Rent(indices.Length);
+    var keysSpan = keys.AsSpan(0, indices.Length);
+
+    if (byX)
+    {
+      for (var index = 0; index < indices.Length; index++)
+      {
+        keysSpan[index] = Nodes[indices[index]].Boundary.CenterX;
+      }
+    }
+    else
+    {
+      for (var index = 0; index < indices.Length; index++)
+      {
+        keysSpan[index] = Nodes[indices[index]].Boundary.CenterY;
+      }
+    }
+
+    keysSpan.Sort(indices);
+
+    ArrayPool<float>.Shared.Return(keys);
   }
 
   private void UpdateViewportItems(RTreeBoundary oldViewport, RTreeBoundary newViewport)
@@ -795,13 +898,15 @@ public class RTree<T>
   private void ResetViewportItems()
   {
     Debug.Assert(_queryStack.Count == 0);
-    _queryStack.Push(Root);
+    _queryStack.Push(RootIndex);
 
     var markedForRemoval = 0;
 
     while (_queryStack.Count > 0)
     {
-      var current = _queryStack.Pop();
+      var currentIndex = _queryStack.Pop();
+      ref var current = ref Nodes[currentIndex];
+
       if (current.IsLeaf)
       {
         if (current.IsVisibleInViewport)
@@ -809,7 +914,7 @@ public class RTree<T>
           markedForRemoval++;
         }
 
-        current.IsVisibleInViewport = false;
+        current.SetLeafVisibleInViewport(this, false);
         continue;
       }
 
@@ -819,10 +924,14 @@ public class RTree<T>
         continue;
       }
 
-      for (var index = 0; index < current.Children.Count; index++)
+      var childrenCount = current.ChildrenCount;
+      var childReferenceOffset = current.FirstChildReferenceIndex;
+
+      for (var index = 0; index < childrenCount; index++)
       {
-        var child = current.Children[index];
-        _queryStack.Push(child);
+        var childReferenceIndex = childReferenceOffset + index;
+        var childIndex = ChildReferences[childReferenceIndex].NodeIndex;
+        _queryStack.Push(childIndex);
       }
     }
 
@@ -849,11 +958,12 @@ public class RTree<T>
     }
 
     Debug.Assert(_queryStack.Count == 0);
-    _queryStack.Push(Root);
+    _queryStack.Push(RootIndex);
 
     while (_queryStack.Count > 0)
     {
-      var current = _queryStack.Pop();
+      var currentIndex = _queryStack.Pop();
+      ref var current = ref Nodes[currentIndex];
 
       if (current.IsLeaf)
       {
@@ -871,7 +981,7 @@ public class RTree<T>
           continue;
         }
 
-        current.IsVisibleInViewport = false;
+        current.SetLeafVisibleInViewport(this, false);
         var actuallyRemoved = _viewportItems.Remove(current.Data);
 
         Debug.Assert(actuallyRemoved);
@@ -887,36 +997,34 @@ public class RTree<T>
       if (viewport.Contains(current.Boundary))
       {
         // All items in this subtree are still within the new viewport, nothing to remove.
-        Debug.Assert(current.Children.Count == current.ChildrenVisibleInViewport);
+        Debug.Assert(current.ChildrenCount == current.ChildrenVisibleInViewport);
         continue;
       }
 
-      for (var index = 0; index < current.Children.Count; index++)
+      var childReferenceOffset = current.FirstChildReferenceIndex;
+      for (var index = 0; index < current.ChildrenCount; index++)
       {
-        var child = current.Children[index];
-        _queryStack.Push(child);
+        var childReferenceIndex = childReferenceOffset + index;
+        var childIndex = ChildReferences[childReferenceIndex].NodeIndex;
+        _queryStack.Push(childIndex);
       }
     }
   }
 
-  private void AddNewIntersectingViewportItems(RTreeBoundary viewport, RTreeNode<T>? startAtNode = null)
+  private void AddNewIntersectingViewportItems(RTreeBoundary viewport, int startAtNode = RTreeNode<T>.NullIndex)
   {
     Debug.Assert(
       !viewport.IsEmpty,
       $"Should not be called if the new viewport is empty, instead {nameof(ResetViewportItems)} " +
       $"should have been called directly.");
 
-    if (viewport.IsEmpty)
-    {
-      return;
-    }
-
     Debug.Assert(_queryStack.Count == 0);
-    _queryStack.Push(startAtNode ?? Root);
+    _queryStack.Push(startAtNode >= 0 ? startAtNode : RootIndex);
 
     while (_queryStack.Count > 0)
     {
-      var current = _queryStack.Pop();
+      var currentIndex = _queryStack.Pop();
+      ref var current = ref Nodes[currentIndex];
 
       if (current.IsLeaf)
       {
@@ -935,7 +1043,7 @@ public class RTree<T>
           continue;
         }
 
-        current.IsVisibleInViewport = true;
+        current.SetLeafVisibleInViewport(this, true);
 
         var actuallyAdded = _viewportItems.Add(current.Data);
         Debug.Assert(wasInViewport != actuallyAdded);
@@ -951,96 +1059,105 @@ public class RTree<T>
         continue;
       }
 
-      // Iterate backwards for pushing to the stack, since this will result in the same order in _viewportItems as in
-      // current.Children. There should not be any advantages regarding memory layout, but it is just a bit easier to
-      // debug and compare items when viewed in the debugger.
-      for (var index = current.Children.Count - 1; index >= 0; index--)
+      // Iterate backwards when pushing to the stack, since this will result in the same order in _viewportItems as in
+      // the current node's children. Just easier to view and compare in the debugger this way.
+      var childReferenceOffset = current.FirstChildReferenceIndex;
+      for (var index = current.ChildrenCount - 1; index >= 0; index--)
       {
-        var child = current.Children[index];
-        _queryStack.Push(child);
+        var childReferenceIndex = childReferenceOffset + index;
+        var childIndex = ChildReferences[childReferenceIndex].NodeIndex;
+        _queryStack.Push(childIndex);
       }
     }
   }
 
-  private RTreeNode<T> CreateLeaf(T data, RTreeBoundary boundary)
+  private int MoveChildrenToParentIfCapacityAvailable(int nodeIndex)
   {
-    if (_recycledLeafNodeCount <= 0)
+    ref var node = ref Nodes[nodeIndex];
+    Debug.Assert(!node.IsLeaf, "Must not be called on leaf nodes.");
+
+    var parentIndex = node.ParentIndex;
+    if (parentIndex < 0)
     {
-      return RTreeNode<T>.CreateLeaf(data, boundary);
+      return nodeIndex;
     }
 
-    var index = _recycledLeafNodeCount - 1;
-    var node = _recycledLeafNodes![index];
-    _recycledLeafNodes[index] = null!;
-    _recycledLeafNodeCount = index;
+    if (Nodes[parentIndex].GetRemainingCapacity(MaxEntriesPerNode) < node.ChildrenCount - 1)
+    {
+      // Removing the node from its parent frees one slot, hence -1 in the condition above.
+      return nodeIndex;
+    }
 
-    node.Data = data;
-    node.Boundary = boundary;
+    // Collect children before removing node from parent (which invalidates slots)
+    var childReferenceIndex = node.FirstChildReferenceIndex;
+    var childCount = node.ChildrenCount;
+    var childIndices = ArrayPool<int>.Shared.Rent(childCount);
 
-    return node;
+    for (var index = 0; index < childCount; index++)
+    {
+      childIndices[index] = ChildReferences[childReferenceIndex + index].NodeIndex;
+    }
+
+    ref var parent = ref Nodes[parentIndex];
+    parent.RemoveChildDirect(this, nodeIndex);
+
+    for (var index = 0; index < childCount; index++)
+    {
+      var childIndex = childIndices[index];
+      ref var child = ref Nodes[childIndex];
+      child.ParentIndex = RTreeNode<T>.NullIndex; // Detach before re-add // TODO: Can be done in AddChildDirect?
+
+      parent.AddChildDirect(this, ref child);
+    }
+
+    ArrayPool<int>.Shared.Return(childIndices, true);
+
+    Nodes[nodeIndex].ChildrenCount = 0; // Reset before freeing to avoid double-detach
+    RTreeNode<T>.Free(this, ref node);
+
+    return parentIndex;
   }
 
-  private RTreeNode<T> CreateNonLeaf()
+  internal int AllocateNodeSlot()
   {
-    if (_recycledNonLeafNodeCount <= 0)
+    if (FreeNodeHead != RTreeNode<T>.NullIndex)
     {
-      return RTreeNode<T>.CreateNonLeaf(_maxEntriesPerNode);
+      var index = FreeNodeHead;
+      FreeNodeHead = Nodes[index].ParentIndex; // Next-free stored in ParentIndex
+      return index;
     }
 
-    var index = _recycledNonLeafNodeCount - 1;
-    var node = _recycledNonLeafNodes![index];
-    _recycledNonLeafNodes[index] = null!;
-    _recycledNonLeafNodeCount = index;
+    if (_nodeCount >= Nodes.Length)
+    {
+      Array.Resize(ref Nodes, Nodes.Length * 2);
+    }
 
-    return node;
+    return _nodeCount++;
   }
 
-  private void RecycleNode(RTreeNode<T> node)
+  internal int AllocateChildBlock()
   {
-    node.Reset();
-
-    if (node.IsLeaf)
+    if (_freeChildBlockHead != RTreeNode<T>.NullIndex)
     {
-      _recycledLeafNodes ??= new RTreeNode<T>[_recycledLeafNodeCapacity];
-      if (_recycledLeafNodeCount < _recycledLeafNodeCapacity - 1)
-      {
-        _recycledLeafNodes[_recycledLeafNodeCount++] = node;
-      }
-
-      return;
+      var blockIndex = _freeChildBlockHead;
+      _freeChildBlockHead = ChildReferences[blockIndex * MaxEntriesPerNode].NodeIndex; // Next-free stored in first slot
+      return blockIndex;
     }
 
-    _recycledNonLeafNodes ??= new RTreeNode<T>[_recycledNonLeafNodeCapacity];
-    if (_recycledNonLeafNodeCount < _recycledNonLeafNodeCapacity - 1)
+    var requiredSlots = (_childReferencesCount + 1) * MaxEntriesPerNode;
+    if (requiredSlots > ChildReferences.Length)
     {
-      _recycledNonLeafNodes[_recycledNonLeafNodeCount++] = node;
+      Array.Resize(ref ChildReferences, ChildReferences.Length * 2);
     }
+
+    return _childReferencesCount++;
   }
 
-  private RTreeNode<T> MoveChildrenToParentIfCapacityAvailable(RTreeNode<T> node)
+  internal void FreeChildBlock(int firstChildIndex)
   {
-    Debug.Assert(!node.IsLeaf, "Must not be called on data leafs.");
-
-    var parent = node.Parent;
-    if (parent == null)
-    {
-      return node;
-    }
-
-    if (parent.RemainingCapacity < node.Children.Count - 1) // -1: For the node which moves its children up
-    {
-      return node;
-    }
-
-    parent.RemoveChildDirect(node);
-
-    for (var index = 0; index < node.Children.Count; index++)
-    {
-      var child = node.Children[index];
-      parent.AddChildDirect(child);
-    }
-
-    RecycleNode(node);
-    return parent;
+    // Push onto free list (first slot's NodeIndex stores next-free block index)
+    var blockIndex = firstChildIndex / MaxEntriesPerNode;
+    ChildReferences[firstChildIndex].NodeIndex = _freeChildBlockHead;
+    _freeChildBlockHead = blockIndex;
   }
 }

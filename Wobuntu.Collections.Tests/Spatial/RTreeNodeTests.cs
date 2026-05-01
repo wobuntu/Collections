@@ -1,188 +1,133 @@
-﻿using Wobuntu.Collections.Spatial;
+using Wobuntu.Collections.Spatial;
+using Wobuntu.Collections.Tests.Spatial.Helpers;
 
 namespace Wobuntu.Collections.Tests.Spatial;
 
+/// <summary>
+///   Tests verifying structural node behaviors through the RTree arena API.
+/// </summary>
 public class RTreeNodeTests
 {
   [Fact]
-  public void CreateLeaf_ChildListIsNull()
+  public void LeafNode_HasNoChildren()
   {
-    var leaf = RTreeNode<string>.CreateLeaf("Test", new RTreeBoundary());
+    // Arrange
+    var tree = new RTree<string>(_ => new RTreeBoundary(0, 0, 10, 10)) { "Test" };
+
+    // Assert: root should have been collapsed to a single leaf
+    // Actually with a single item, root is a non-leaf with one leaf child.
+    // After adding one more and removing it, we get a leaf root.
+    var root = tree.CreateTestView(tree.RootIndex);
+    Assert.False(root.IsLeaf); // Root is always non-leaf initially
+    Assert.Equal(1, root.ChildCount);
+
+    var leaf = root.Child(0);
     Assert.True(leaf.IsLeaf);
-    Assert.Null(leaf.Children);
+    Assert.Equal(0, leaf.ChildCount);
   }
 
   [Fact]
-  public void CreateLeaf_ReferenceType_DataNotNull()
+  public void LeafNode_StoresDataAndBoundary()
   {
     var boundary = new RTreeBoundary(0, 0, 10, 10);
-    var leaf = RTreeNode<string>.CreateLeaf("Test", boundary);
+    var tree = new RTree<string>(_ => boundary) { "Test" };
+
+    var leaf = tree.CreateTestView(tree.RootIndex).Child(0);
     Assert.Equal("Test", leaf.Data);
     Assert.Equal(boundary, leaf.Boundary);
     Assert.True(leaf.IsLeaf);
   }
 
   [Fact]
-  public void CreateLeaf_ReferenceType_ThrowsOnNull() =>
-    Assert.Throws<ArgumentNullException>(() => RTreeNode<string>.CreateLeaf(null!, new RTreeBoundary()));
-
-  [Fact]
-  public void CreateLeaf_ValueType_DataNotDefault()
+  public void NonLeafNode_HasCorrectCapacity()
   {
-    var boundary = new RTreeBoundary(0, 0, 10, 10);
-    var data = Guid.NewGuid();
-    var leaf = RTreeNode<Guid>.CreateLeaf(data, boundary);
-    Assert.Equal(data, leaf.Data);
-    Assert.Equal(boundary, leaf.Boundary);
-    Assert.True(leaf.IsLeaf);
-    Assert.Null(leaf.Children);
-  }
+    var options = new RTreeOptions { MaxEntriesPerNode = 16 };
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1), options) { 1 };
 
-  [Fact]
-  public void CreateLeaf_ValueType_DoesNotThrowOnDefault()
-  {
-    var leaf = RTreeNode<Guid>.CreateLeaf(default, default);
-    Assert.Equal(default, leaf.Data);
-    Assert.Equal(default, leaf.Boundary);
-    Assert.Null(leaf.Children);
-  }
-
-  [Fact]
-  public void CreateNonLeaf_MaxEntriesSet_CapacityIsMax()
-  {
-    var node = RTreeNode<Guid>.CreateNonLeaf(16);
-    var capacity = ((List<RTreeNode<Guid>>)node.Children!).Capacity;
-    Assert.Equal(16, capacity);
-    Assert.Equal(16, node.RemainingCapacity);
+    var root = tree.CreateTestView(tree.RootIndex);
+    Assert.False(root.IsLeaf);
+    Assert.Equal(15, root.RemainingCapacity); // 16 - 1 child
   }
 
   [Fact]
   public void RemainingCapacity_WithCustomCapacity_CountedCorrectly()
   {
     // Arrange
-    const int capacity = 16;
-    var filledUp = RTreeNode<string>.CreateNonLeaf(capacity);
+    var options = new RTreeOptions { MaxEntriesPerNode = 16 };
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1), options);
+    var root = tree.CreateTestView(tree.RootIndex);
 
-    // Act/Assert
-    for (var index = 1; index <= capacity; index++)
+    // Act/Assert: Add items one by one and check capacity decreases
+    for (var index = 1; index <= 16; index++)
     {
-      filledUp.AddChildDirect(RTreeNode<string>.CreateLeaf("Test" + index, new RTreeBoundary()));
-      Assert.Equal(capacity - index, filledUp.RemainingCapacity);
+      tree.Add(index);
+      Assert.Equal(16 - index, root.RemainingCapacity);
     }
 
-    Assert.Equal(0, filledUp.RemainingCapacity);
-    Assert.Equal(capacity, filledUp.Children!.Count);
+    Assert.Equal(0, root.RemainingCapacity);
+    Assert.Equal(16, root.ChildCount);
   }
 
   [Fact]
-  public void AddChildDirect_UpdatesChildParent()
+  public void AddChild_UpdatesParentBoundary()
   {
     // Arrange
-    var parent = RTreeNode<string>.CreateNonLeaf(2);
-    var childLeaf = RTreeNode<string>.CreateLeaf("Test", new RTreeBoundary());
-    var childNonLeaf = RTreeNode<string>.CreateNonLeaf(2);
+    var options = new RTreeOptions { MaxEntriesPerNode = 4 };
+    var tree = new RTree<string>(x => x switch
+    {
+      "A" => new RTreeBoundary(10, 20, 30, 40),
+      "B" => new RTreeBoundary(50, 60, 10, 10),
+      _ => new RTreeBoundary()
+    }, options) { "A" };
+
+    Assert.Equal(new RTreeBoundary(10, 20, 30, 40), tree.Boundary);
 
     // Act
-    parent.AddChildDirect(childLeaf);
-    parent.AddChildDirect(childNonLeaf);
+    tree.Add("B");
 
-    // Assert
-    Assert.Equal(parent, childLeaf.Parent);
-    Assert.Equal(parent, childNonLeaf.Parent);
+    // Assert: root boundary should be the union of both children
+    Assert.Equal(new RTreeBoundary(10, 20, 50, 50), tree.Boundary);
   }
 
   [Fact]
-  public void AddChildDirect_OneWithOneWithoutBoundary_UpdatesParentBoundaryCorrectly()
+  public void RemoveChild_RecalculatesBoundary()
   {
     // Arrange
-    var parent = RTreeNode<string>.CreateNonLeaf(2);
+    var options = new RTreeOptions { MaxEntriesPerNode = 4 };
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, x * 10, 10, 10), options);
 
-    var firstChildBoundary = new RTreeBoundary(10, 20, 30, 40);
-    var firstChild = RTreeNode<string>.CreateLeaf("Test", firstChildBoundary);
+    tree.Add(1); // boundary: 10,10,10,10
+    tree.Add(2); // boundary: 20,20,10,10
+    tree.Add(3); // boundary: 30,30,10,10
 
-    var secondChild = RTreeNode<string>.CreateNonLeaf(2); // Boundary is here (0,0,0,0)
+    var boundaryBefore = tree.Boundary;
+    Assert.Equal(new RTreeBoundary(10, 10, 30, 30), boundaryBefore);
 
-    // Act
-    parent.AddChildDirect(firstChild);
-    parent.AddChildDirect(secondChild);
+    // Act: remove the item that extends the boundary the most
+    tree.Remove(3);
 
-    // Assert
-    Assert.Equal(default, secondChild.Boundary);
-    Assert.Equal(firstChildBoundary, firstChild.Boundary);
-    Assert.Equal(firstChildBoundary, parent.Boundary);
+    // Assert: boundary should shrink
+    Assert.Equal(new RTreeBoundary(10, 10, 20, 20), tree.Boundary);
   }
 
   [Fact]
-  public void AddChildDirect_TwoWithSetBoundary_UpdatesParentBoundaryCorrectly()
+  public void InsertParentLayer_PreservesItems()
   {
-    // Arrange
-    var parent = RTreeNode<string>.CreateNonLeaf(2);
+    // Arrange: use maxEntries=2 so adding a 3rd item forces a parent layer insertion
+    var options = new RTreeOptions { MaxEntriesPerNode = 2 };
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, 10, 10, 10), options);
 
-    var firstChildBoundary = new RTreeBoundary(10, 20, 30, 40);
-    var firstChild = RTreeNode<string>.CreateLeaf("Test", firstChildBoundary);
+    tree.Add(1);
+    tree.Add(2);
+    Assert.Equal(2, tree.CreateTestView(tree.RootIndex).ChildCount);
 
-    var secondChild = RTreeNode<string>.CreateNonLeaf(2); // Boundary is here (0,0,0,0)
+    // Act: adding a 3rd item forces InsertParentLayer
+    tree.Add(3);
 
-    var thirdChildBoundary = new RTreeBoundary(25, 10, 30, 40);
-    var thirdChild = RTreeNode<string>.CreateLeaf("Test", thirdChildBoundary);
-
-    // Act
-    parent.AddChildDirect(firstChild);
-    secondChild.AddChildDirect(thirdChild);
-    parent.AddChildDirect(secondChild);
-
-    // Assert
-    Assert.Equal(firstChildBoundary, firstChild.Boundary);
-    Assert.Equal(thirdChildBoundary, thirdChild.Boundary);
-    Assert.Equal(thirdChildBoundary, secondChild.Boundary);
-    Assert.Equal(new RTreeBoundary(10, 10, 45, 50), parent.Boundary);
-  }
-
-  [Fact]
-  public void RemoveChildDirect_ChildWithNonEmptyBoundary_RecalculatesOwnBoundary()
-  {
-    // Arrange
-    var parent = RTreeNode<int>.CreateNonLeaf(3);
-
-    var children = Enumerable
-      .Range(1, 3)
-      .Select(x => RTreeNode<int>.CreateLeaf(x, new RTreeBoundary(x * 10, x * 10, 10, 10)))
-      .ToArray()
-      .AsSpan();
-
-    parent.AddChildrenDirect(children);
-    var previousBoundary = parent.Boundary;
-
-    // Act
-    parent.RemoveChildDirect(children[^1]);
-
-    // Assert
-    Assert.Equal(new RTreeBoundary(10, 10, 30, 30), previousBoundary);
-    Assert.Equal(2, parent.Children!.Count);
-    Assert.Equal(new RTreeBoundary(10, 10, 20, 20), parent.Boundary);
-  }
-
-  [Fact]
-  public void InsertParentLayer_CreatesCorrectRelationships()
-  {
-    // Arrange
-    var boundary = new RTreeBoundary(10, 20, 30, 40);
-    var leaf = RTreeNode<string>.CreateLeaf("Test", boundary);
-    var oldRoot = RTreeNode<string>.CreateNonLeaf(2);
-    oldRoot.AddChildDirect(leaf);
-
-    // Act
-    var insertedAboveLeaf = leaf.InsertParentLayer(2);
-    var newRoot = oldRoot.InsertParentLayer(2); // Handles case if parent is null.
-
-    // Assert
-    Assert.Null(newRoot.Parent);
-    Assert.Equal(newRoot, oldRoot.Parent!);
-    Assert.Equal(oldRoot, insertedAboveLeaf.Parent!);
-    Assert.Equal(insertedAboveLeaf, leaf.Parent!);
-
-    Assert.Equal(boundary, insertedAboveLeaf.Boundary);
-    Assert.Equal(boundary, oldRoot.Boundary);
-    Assert.Equal(boundary, newRoot.Boundary);
+    // Assert: all items are still present
+    Assert.True(tree.Contains(1));
+    Assert.True(tree.Contains(2));
+    Assert.True(tree.Contains(3));
+    Assert.Equal(3, tree.Count);
   }
 }

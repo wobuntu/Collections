@@ -2,30 +2,38 @@
 
 namespace Wobuntu.Collections.Spatial;
 
+// TODO: Allow setting initial capacity instead of Node/Childblock capacities, basically derive them from this number.
+// Same for QueryStack capacity
 public class RTreeOptions
 {
+  private const string MaxEntriesPerNodeMustBeAtLeast2 = "A maximum entry capacity of at least 2 is required.";
   private const string PercentageOutOfRange = "The value must be a number between 0 and 1.";
+  private const string InitialCapacityMustBeBigger0 = "The initial capacity must be at least 1.";
 
-  public const int DefaultMaxEntriesPerNode = 12;
-  public const int MinEntriesPerNodeMinimum = 2;
+  public const ushort DefaultMaxEntriesPerNode = 12;
+  public const ushort MinEntriesPerNodeMinimum = 2;
+  public const int DefaultInitialNodeCapacity = 256;
+  public const int DefaultInitialChildBlockCapacity = 64;
+  public const int DefaultInitialQueryStackCapacity = 64;
+  public const int DefaultInitialViewportItemsCapacity = 64;
 
   internal const float MinEntriesRatio = 0.4f;
 
-  public int MaxEntriesPerNode
+  public ushort MaxEntriesPerNode
   {
     get;
     init
     {
       if (value < MinEntriesPerNodeMinimum)
       {
-        throw new ArgumentOutOfRangeException(nameof(value), value, "A maximum entry capacity of at least 2 is required.");
+        throw new ArgumentOutOfRangeException(nameof(value), value, MaxEntriesPerNodeMustBeAtLeast2);
       }
 
       field = value;
     }
   } = DefaultMaxEntriesPerNode;
 
-  public int MinEntriesPerNode => DeriveMinEntriesFromMaxEntriesPerNode(MaxEntriesPerNode);
+  public ushort MinEntriesPerNode => DeriveMinEntriesFromMaxEntriesPerNode(MaxEntriesPerNode);
 
   /// <summary>
   ///   Gets or sets the threshold used on shrinking the <see cref="RTree{T}.Viewport"/>, which determines
@@ -49,18 +57,66 @@ public class RTreeOptions
   } = .3;
 
   /// <summary>
-  ///   Specifies the number (default: 64) of previously removed leaf nodes, which are kept in memory for reuse.<br />
-  ///   Set 0 or a negative number to disable leaf node recycling.
+  ///   Gets or sets the initial capacity of nodes, which must be at least <c>1</c>.<br />
+  ///   Set to a higher number than the default <see cref="DefaultInitialNodeCapacity"/> to avoid unnecessary reallocation.
   /// </summary>
-  public int RecycledLeafNodeCapacity { get; set; } = 64;
+  public int InitialNodeCapacity
+  {
+    get;
+    init
+    {
+      if (value < 1)
+      {
+        throw new ArgumentOutOfRangeException(nameof(value), value, InitialCapacityMustBeBigger0);
+      }
 
-  /// <summary>
-  ///   Specifies the number (default: 32) of previously removed leaf nodes, which are kept in memory for reuse.<br />
-  ///   Set 0 or a negative number to disable leaf node recycling.
-  /// </summary>
-  public int RecycledNonLeafNodeCapacity { get; set; } = 32;
+      field = value;
+    }
+  } = DefaultInitialNodeCapacity;
 
-  internal static int DeriveMinEntriesFromMaxEntriesPerNode(int maxEntries)
+  public int InitialChildBlockCapacity
+  {
+    get;
+    init
+    {
+      if (value < 1)
+      {
+        throw new ArgumentOutOfRangeException(nameof(value), value, InitialCapacityMustBeBigger0);
+      }
+
+      field = value;
+    }
+  } = DefaultInitialChildBlockCapacity;
+
+  public int InitialQueryStackCapacity
+  {
+    get;
+    init
+    {
+      if (value < 1)
+      {
+        throw new ArgumentOutOfRangeException(nameof(value), value, InitialCapacityMustBeBigger0);
+      }
+
+      field = value;
+    }
+  } = DefaultInitialQueryStackCapacity;
+
+  public int InitialViewportItemsCapacity
+  {
+    get;
+    init
+    {
+      if (value < 1)
+      {
+        throw new ArgumentOutOfRangeException(nameof(value), value, InitialCapacityMustBeBigger0);
+      }
+
+      field = value;
+    }
+  } = DefaultInitialViewportItemsCapacity;
+
+  internal static ushort DeriveMinEntriesFromMaxEntriesPerNode(int maxEntries)
   {
     if (maxEntries < MinEntriesPerNodeMinimum)
     {
@@ -68,6 +124,6 @@ public class RTreeOptions
     }
 
     var minEntries = Math.Max(MinEntriesPerNodeMinimum, (int)(maxEntries * MinEntriesRatio));
-    return minEntries;
+    return (ushort)minEntries;
   }
 }

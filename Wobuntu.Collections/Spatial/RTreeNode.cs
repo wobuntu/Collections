@@ -1,9 +1,11 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
-using System.Collections.Generic;
+using System.Buffers;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 // Disabling some resharper suggestions as they are hurting performance in hot paths of this file:
 // ReSharper disable ForCanBeConvertedToForeach
@@ -11,216 +13,299 @@ using System.Diagnostics.CodeAnalysis;
 namespace Wobuntu.Collections.Spatial;
 
 [DebuggerDisplay($"{{{nameof(Boundary)}}} {{{nameof(IsLeaf)} ? {nameof(Data)}.ToString() : \"\"}}")]
-internal class RTreeNode<T>
+[StructLayout(LayoutKind.Sequential)]
+internal struct RTreeNode<T>
   where T : notnull
 {
-  private readonly int _maxEntries;
+  internal const int NullIndex = -1;
 
-  internal readonly List<RTreeNode<T>>? Children;
-  internal RTreeNode<T>? Parent;
+  internal int ParentIndex;
+  internal int OwnIndex;
+
+  internal int FirstChildReferenceIndex;
+  internal ushort ChildrenCount;
+  private ushort _childrenVisibleInViewport;
+
   internal RTreeBoundary Boundary;
   internal T? Data;
 
-  private int _childrenVisibleInViewport;
-
-  private RTreeNode(T data, RTreeBoundary boundary)
+  internal static ref RTreeNode<T> AllocateLeaf(RTree<T> owner, T data, RTreeBoundary boundary)
   {
-    ArgumentNullException.ThrowIfNull(data);
-    Data = data;
-    Boundary = boundary;
+    var index = owner.AllocateNodeSlot();
+
+    ref var node = ref owner.Nodes[index];
+
+    node.ParentIndex = NullIndex;
+    node.OwnIndex = index;
+
+    node.FirstChildReferenceIndex = NullIndex;
+    node.ChildrenCount = 0;
+    node._childrenVisibleInViewport = 0;
+
+    node.Boundary = boundary;
+    node.Data = data;
+
+    return ref node;
   }
 
-  private RTreeNode(int maxEntries)
+  internal static ref RTreeNode<T> AllocateNonLeaf(RTree<T> owner)
   {
-    Debug.Assert(maxEntries >= RTreeOptions.MinEntriesPerNodeMinimum);
+    var index = owner.AllocateNodeSlot();
+    var childBlockIndex = owner.AllocateChildBlock();
 
-    _maxEntries = maxEntries;
-    Children = new List<RTreeNode<T>>(_maxEntries);
+    ref var node = ref owner.Nodes[index];
+
+    node.ParentIndex = NullIndex;
+    node.OwnIndex = index;
+
+    node.FirstChildReferenceIndex = childBlockIndex * owner.MaxEntriesPerNode;
+    node.ChildrenCount = 0;
+    node._childrenVisibleInViewport = 0;
+
+    node.Boundary = new RTreeBoundary();
+    node.Data = default;
+
+    return ref node;
   }
 
-  internal static RTreeNode<T> CreateLeaf(T data, RTreeBoundary boundary) => new(data, boundary);
+  internal static void Free(RTree<T> owner, ref RTreeNode<T> node)
+  {
+    if (!node.IsLeaf)
+    {
+      owner.FreeChildBlock(node.FirstChildReferenceIndex);
+    }
 
-  internal static RTreeNode<T> CreateNonLeaf(int maxEntries) => new(maxEntries);
+    node._childrenVisibleInViewport = 0;
+    
+    node.Data = default;
+    node.FirstChildReferenceIndex = NullIndex;
+    node.ChildrenCount = 0;
+    node.Boundary = default;
+
+    node.ParentIndex = owner.FreeNodeHead;
+    owner.FreeNodeHead = node.OwnIndex;
+
+    node.OwnIndex = NullIndex;
+  }
 
   [MemberNotNullWhen(true, nameof(Data))]
-  [MemberNotNullWhen(false, nameof(Children))]
-  internal bool IsLeaf => Children == null;
-
-  internal int RemainingCapacity => IsLeaf ? 0 : Math.Max(_maxEntries - Children.Count, 0);
-
-  internal bool IsOverFull
+  internal readonly bool IsLeaf
   {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    get => FirstChildReferenceIndex < 0;
+  }
+
+  internal readonly ushort ChildrenVisibleInViewport
+  {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     get
     {
-      Debug.Assert(!IsLeaf, "Must not be called on leafs.");
-      return _maxEntries < Children.Count;
+      Debug.Assert(FirstChildReferenceIndex >= 0, "For correct semantics, don't call this on data leafs.");
+      return _childrenVisibleInViewport;
     }
   }
 
-  internal int ChildrenVisibleInViewport
+  internal readonly bool IsVisibleInViewport
   {
-    get => _childrenVisibleInViewport;
-    set
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    get
     {
-      Debug.Assert(!IsLeaf, "Must not be called on leafs.");
-      if (_childrenVisibleInViewport == value)
-      {
-        return;
-      }
-
-      var oldValue = _childrenVisibleInViewport;
-      _childrenVisibleInViewport = value;
-
-      Debug.Assert(_childrenVisibleInViewport >= 0, "Must not ever become negative.");
-      Debug.Assert(_childrenVisibleInViewport <= Children.Count);
-
-      if (Parent == null)
-      {
-        return;
-      }
-
-      if (value <= 0 && oldValue > 0)
-      {
-        // If value becomes 0: No more children of the parent are in the viewport, hence notify
-        // its parent as well that it is now no longer part of the viewport nodes.
-        Parent.ChildrenVisibleInViewport--;
-      }
-      else if (value > 0 && oldValue <= 0)
-      {
-        // If value becomes > 0: No children of the parent have been tracked before, hence
-        // notify its parent as well that it is now part of the viewport nodes.
-        Parent.ChildrenVisibleInViewport++;
-      }
+      Debug.Assert(IsLeaf, "For correct semantics, don't call this on non-leafs.");
+      return _childrenVisibleInViewport > 0;
     }
   }
 
-  internal bool IsVisibleInViewport
+  internal void SetLeafVisibleInViewport(RTree<T> owner, bool value)
   {
-    get => _childrenVisibleInViewport > 0;
-    set
+    Debug.Assert(IsLeaf, "Must only be called on leaf nodes.");
+
+    var current = _childrenVisibleInViewport > 0;
+    if (current == value)
     {
-      Debug.Assert(IsLeaf, "Must not be called on non-leafs.");
-      if (_childrenVisibleInViewport > 0 == value)
-      {
-        return;
-      }
+      return;
+    }
 
-      _childrenVisibleInViewport = value ? 1 : 0;
-      Parent?.ChildrenVisibleInViewport += value ? 1 : -1;
+    _childrenVisibleInViewport = value ? (ushort)1 : (ushort)0;
+
+    if (ParentIndex < 0)
+    {
+      return;
+    }
+
+    ref var parent = ref owner.Nodes[ParentIndex];
+    parent.UpdateChildrenVisibleInViewport(owner, value ? 1 : -1);
+  }
+
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
+  internal readonly bool HasRemainingCapacity(int maxEntriesPerNode) =>
+    !IsLeaf && maxEntriesPerNode - ChildrenCount > 0;
+
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
+  internal readonly int GetRemainingCapacity(int maxEntriesPerNode) =>
+    IsLeaf ? 0 : Math.Max(0, maxEntriesPerNode - ChildrenCount);
+
+  internal bool IsOverFull(int maxEntriesPerNode)
+  {
+    Debug.Assert(!IsLeaf, "Must not be called on leafs.");
+    return maxEntriesPerNode < ChildrenCount;
+  }
+
+  internal void UpdateChildrenVisibleInViewport(RTree<T> owner, int delta)
+  {
+    Debug.Assert(!IsLeaf, "Must not be called on leaf nodes.");
+    Debug.Assert(_childrenVisibleInViewport + delta >= 0, "Must not ever become negative.");
+
+    if (delta == 0)
+    {
+      return;
+    }
+
+    var oldValue = _childrenVisibleInViewport;
+    _childrenVisibleInViewport += (ushort)delta;
+
+    if (ParentIndex < 0)
+    {
+      return;
+    }
+
+    ref var parent = ref owner.Nodes[ParentIndex];
+    if (_childrenVisibleInViewport <= 0 && oldValue > 0)
+    {
+      // If value becomes 0: No more children are in the viewport, hence notify
+      // the parent as well that this node is now no longer part of the viewport nodes.
+      parent.UpdateChildrenVisibleInViewport(owner, -1);
+    }
+    else if (_childrenVisibleInViewport > 0 && oldValue <= 0)
+    {
+      // If value becomes > 0: No children have been tracked in the viewport before, hence
+      // notify the parent that this node is now part of the viewport nodes.
+      parent.UpdateChildrenVisibleInViewport(owner, 1);
     }
   }
 
-  internal void AddChildDirect(RTreeNode<T> child)
+  internal void AddChildDirect(RTree<T> owner, ref RTreeNode<T> child)
   {
-    Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
-    Children.Add(child);
-    child.Parent = this;
-    UpdateBoundaryIncremental(child);
+    Debug.Assert(!IsLeaf, "Must not be called on leaf nodes.");
+
+    var childBoundary = child.Boundary;
+    var childReferenceIndex = FirstChildReferenceIndex + ChildrenCount;
+
+    owner.ChildReferences[childReferenceIndex] = new RTreeNodeReference
+    {
+      NodeIndex = child.OwnIndex,
+      Boundary = childBoundary,
+    };
+
+    ChildrenCount++;
+
+    child.ParentIndex = OwnIndex;
+    UpdateBoundaryIncremental(owner, in childBoundary);
 
     if (child._childrenVisibleInViewport > 0)
     {
-      ChildrenVisibleInViewport++;
+      UpdateChildrenVisibleInViewport(owner, 1);
     }
 
-    Debug.Assert(!IsOverFull, "This implementation must not create overfull nodes.");
+    Debug.Assert(!IsOverFull(owner.MaxEntriesPerNode), "Must not create overfull nodes.");
   }
 
-  internal void AddChildrenDirect(Span<RTreeNode<T>> children)
+  internal void AddChildrenDirect(RTree<T> owner, Span<int> childIndices)
   {
-    Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
-    for (var index = 0; index < children.Length; index++)
+    Debug.Assert(!IsLeaf, "Must not be called on leaf nodes.");
+
+    var childReferenceOffset = FirstChildReferenceIndex;
+
+    for (var index = 0; index < childIndices.Length; index++)
     {
-      var child = children[index];
-      Children.Add(child);
-      child.Parent = this;
-      UpdateBoundaryIncremental(child);
+      var childIndex = childIndices[index];
+      ref var child = ref owner.Nodes[childIndex];
+      var childBoundary = child.Boundary;
+
+      var childReferenceIndex = childReferenceOffset + ChildrenCount;
+      owner.ChildReferences[childReferenceIndex] = new RTreeNodeReference
+      {
+        NodeIndex = childIndex,
+        Boundary = childBoundary,
+      };
+
+      ChildrenCount++;
+
+      child.ParentIndex = OwnIndex;
+      UpdateBoundaryIncremental(owner, in childBoundary);
 
       if (child._childrenVisibleInViewport > 0)
       {
-        ChildrenVisibleInViewport++;
+        UpdateChildrenVisibleInViewport(owner, 1);
       }
     }
 
-    Debug.Assert(!IsOverFull, "This implementation must not create overfull nodes.");
+    Debug.Assert(ChildrenCount <= owner.MaxEntriesPerNode, "Must not create overfull nodes.");
   }
 
-  internal void RemoveChildDirect(RTreeNode<T> child)
+  internal void RemoveChildDirect(RTree<T> owner, int childIndex)
   {
-    Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
+    // TODO: childIndex: replace with child
+    Debug.Assert(!IsLeaf, "Must not be called on leaf nodes.");
 
-    var index = Children.IndexOf(child);
-    if (child.Parent != this || index < 0)
+    var childReferenceOffset = FirstChildReferenceIndex;
+
+    var removeAt = -1;
+    for (var index = 0; index < ChildrenCount; index++)
     {
-      Debug.Fail("Should not be possible.");
+      if (owner.ChildReferences[childReferenceOffset + index].NodeIndex == childIndex)
+      {
+        removeAt = index;
+        break;
+      }
+    }
+
+    if (removeAt < 0)
+    {
+      Debug.Fail("Child not found in parent's slot list.");
       return;
     }
 
-    // Swap with the last element before removing to avoid O(n) shifting.
-    var lastIndex = Children.Count - 1;
-    if (index != lastIndex)
+    // Swap-remove with last
+    var lastIndex = ChildrenCount - 1;
+    if (removeAt != lastIndex)
     {
-      Children[index] = Children[lastIndex];
+      owner.ChildReferences[childReferenceOffset + removeAt] = owner.ChildReferences[childReferenceOffset + lastIndex];
     }
 
-    Children.RemoveAt(lastIndex);
-    child.Parent = null;
-    UpdateBoundary();
+    ChildrenCount--;
+    ref var child = ref owner.Nodes[childIndex];
+    child.ParentIndex = NullIndex;
+    UpdateBoundary(owner);
 
-    if (child._childrenVisibleInViewport > 0)
+    var isLeaf = child.IsLeaf;
+    var shouldUpdateParent = (isLeaf && child.IsVisibleInViewport)
+                             || (!isLeaf && child.ChildrenVisibleInViewport > 0);
+
+    if (shouldUpdateParent)
     {
-      ChildrenVisibleInViewport--;
+      UpdateChildrenVisibleInViewport(owner, -1);
     }
   }
 
-  internal RTreeNode<T> InsertParentLayer(int maxEntriesPerNode)
+  internal void UpdateBoundary(RTree<T> owner)
   {
-    var newParent = CreateNonLeaf(maxEntriesPerNode);
-    newParent.Boundary = Boundary;
-    newParent.Parent = Parent;
+    Debug.Assert(!IsLeaf, "Must not be called on leaf nodes.");
 
-    if (Parent != null && Parent.Children!.IndexOf(this) is var ownIndex)
-    {
-      Debug.Assert(ownIndex >= 0);
-      Parent.Children![ownIndex] = newParent;
-    }
-
-    newParent.Children!.Add(this);
-    Parent = newParent;
-
-    if (_childrenVisibleInViewport > 0)
-    {
-      // Setting the field directly, because nothing changed for the
-      // parent of newParent, which would be checked by the property setter.
-      newParent._childrenVisibleInViewport = 1;
-    }
-
-    return newParent;
-  }
-
-  internal void Reset()
-  {
-    Parent = null;
-    Boundary = new RTreeBoundary();
-    _childrenVisibleInViewport = 0;
-
-    Children?.Clear();
-    Data = default;
-  }
-
-  private void UpdateBoundary()
-  {
-    Debug.Assert(!IsLeaf, "Must not be called on data leafs.");
-    if (Children.Count == 0)
+    if (ChildrenCount == 0)
     {
       Boundary = new RTreeBoundary();
+      SyncBoundaryInParentSlot(owner);
       return;
     }
 
-    Boundary = Children[0].Boundary;
+    var childReferenceOffset = FirstChildReferenceIndex;
+    Boundary = owner.ChildReferences[childReferenceOffset].Boundary;
 
-    for (var index = 1; index < Children.Count; index++)
+    for (var index = 1; index < ChildrenCount; index++)
     {
-      var childBoundary = Children[index].Boundary;
+      var child = owner.ChildReferences[childReferenceOffset + index];
+      var childBoundary = child.Boundary;
+
       if (childBoundary.IsEmpty)
       {
         continue;
@@ -228,11 +313,12 @@ internal class RTreeNode<T>
 
       Boundary = Boundary.IsEmpty ? childBoundary : Boundary.Union(childBoundary);
     }
+
+    SyncBoundaryInParentSlot(owner);
   }
 
-  private void UpdateBoundaryIncremental(RTreeNode<T> added)
+  private void UpdateBoundaryIncremental(RTree<T> owner, in RTreeBoundary addedBoundary)
   {
-    var addedBoundary = added.Boundary;
     if (addedBoundary.IsEmpty)
     {
       return;
@@ -241,9 +327,138 @@ internal class RTreeNode<T>
     if (Boundary.IsEmpty)
     {
       Boundary = addedBoundary;
+    }
+    else
+    {
+      Boundary = Boundary.Union(addedBoundary);
+    }
+
+    SyncBoundaryInParentSlot(owner);
+  }
+
+  internal void SyncBoundaryInParentSlot(RTree<T> owner)
+  {
+    if (ParentIndex < 0)
+    {
       return;
     }
 
-    Boundary = Boundary.Union(addedBoundary);
+    ref readonly var parent = ref owner.Nodes[ParentIndex];
+    var childReferenceOffset = parent.FirstChildReferenceIndex;
+
+    for (var index = 0; index < parent.ChildrenCount; index++)
+    {
+      ref var childReference = ref owner.ChildReferences[childReferenceOffset + index];
+      if (childReference.NodeIndex != OwnIndex)
+      {
+        continue;
+      }
+
+      childReference.Boundary = Boundary;
+      return;
+    }
+  }
+
+  internal static void RebalanceBranch(RTree<T> owner, ref RTreeNode<T> branchRoot)
+  {
+    Debug.Assert(!branchRoot.IsLeaf, "Must not be called on leaf nodes.");
+
+    var nodeIndices = ArrayPool<int>.Shared.Rent(branchRoot.ChildrenCount);
+
+    for (var index = 0; index < branchRoot.ChildrenCount; index++)
+    {
+      nodeIndices[index] = owner.ChildReferences[branchRoot.FirstChildReferenceIndex + index].NodeIndex;
+    }
+
+    // Reset viewport tracking before clearing children.
+    // Setting field directly and propagating up manually.
+    if (branchRoot is { ChildrenVisibleInViewport: > 0, ParentIndex: >= 0 })
+    {
+      ref var parent = ref owner.Nodes[branchRoot.ParentIndex];
+      parent.UpdateChildrenVisibleInViewport(owner, -1);
+    }
+
+    var indicesSpan = nodeIndices.AsSpan(0, branchRoot.ChildrenCount);
+    branchRoot.ChildrenCount = 0; // Reset before freeing to avoid double-detach
+    branchRoot._childrenVisibleInViewport = 0;
+    branchRoot.Boundary = new RTreeBoundary();
+
+    var branchRootIndex = branchRoot.OwnIndex;
+    owner.BuildSortTileRecursiveTree(branchRootIndex, indicesSpan);
+
+    // Reallocation may have occurred, which could cause references to be outdated.
+    // Hence, refetch branchRoot.
+    branchRoot = ref owner.Nodes[branchRootIndex];
+
+    // Sync parent slot boundary after rebuild
+    branchRoot.SyncBoundaryInParentSlot(owner);
+
+    // Restore viewport propagation if any children are visible
+    if (branchRoot.ChildrenVisibleInViewport > 0 && branchRoot.ParentIndex >= 0)
+    {
+      ref var parent = ref owner.Nodes[branchRoot.ParentIndex];
+      parent.UpdateChildrenVisibleInViewport(owner, 1);
+    }
+
+    ArrayPool<int>.Shared.Return(nodeIndices, true);
+  }
+
+  internal static ref RTreeNode<T> InsertParentLayer(RTree<T> owner, ref RTreeNode<T> forNode)
+  {
+    var nodeIndex = forNode.OwnIndex;
+    ref var newParent = ref AllocateNonLeaf(owner);
+    
+    // Allocation of a parent layer may invalidate forNode reference, hence refetch after allocation.
+    forNode = ref owner.Nodes[nodeIndex];
+    newParent.Boundary = forNode.Boundary;
+
+    var oldParentIndex = forNode.ParentIndex;
+    newParent.ParentIndex = oldParentIndex;
+
+    // Replace nodeIndex with newParentIndex in old parent's child slots
+    if (oldParentIndex >= 0)
+    {
+      ref var oldParent = ref owner.Nodes[oldParentIndex];
+      var childReferenceOffset = oldParent.FirstChildReferenceIndex;
+      var newParentIndex = newParent.OwnIndex;
+
+      for (var index = 0; index < oldParent.ChildrenCount; index++)
+      {
+        if (owner.ChildReferences[childReferenceOffset + index].NodeIndex == forNode.OwnIndex)
+        {
+          owner.ChildReferences[childReferenceOffset + index].NodeIndex = newParentIndex;
+          // Boundary stays the same - newParent inherits node's boundary
+          break;
+        }
+      }
+    }
+
+    // Add node as the only child of newParent
+    var slotIndex = newParent.FirstChildReferenceIndex;
+    owner.ChildReferences[slotIndex] = new RTreeNodeReference
+    {
+      NodeIndex = forNode.OwnIndex,
+      Boundary = forNode.Boundary,
+    };
+    newParent.ChildrenCount = 1;
+    forNode.ParentIndex = newParent.OwnIndex;
+
+    // Viewport tracking: directly set the field to avoid propagation to old parent
+    if (forNode._childrenVisibleInViewport > 0)
+    {
+      newParent._childrenVisibleInViewport = 1;
+    }
+
+    return ref newParent;
   }
 }
+
+// TODO: check full boundary necessary in both structs
+// TODO: Mark readonly wherever possible
+// TODO: Return and work with Nodes instead of indexes where possible
+// TODO: Use readonly ref vars where possible
+// TODO: Fix method order (public, public static, internal, internal static, private, private static)
+// TODO: Use methods to get nodes at an index, to return readonly or just ref nodes?
+// TODO: Update method with delta: just use an increment/decrement version instead
+// TODO: check visibility
+// TODO: Better dictionary for searching ChildNodeRefs instead of iterating?
