@@ -10,10 +10,10 @@ using NtsEnvelope = NetTopologySuite.Geometries.Envelope;
 namespace Wobuntu.Collections.Benchmarks;
 
 /// <summary>
-///   Measures how fast each library can construct a tree from N items at once.
-///   Our implementation uses the STR (Sort-Tile-Recursive) algorithm via the Span constructor.
-///   RBush uses the OMT (Overlap Minimizing Top-down) bulk-load algorithm.
-///   NetTopologySuite STRtree builds on first query after all inserts.
+///   Measures how fast each library can construct a tree from N items at once.<br />
+///   Our implementation uses the STR (Sort-Tile-Recursive) algorithm via the Span constructor.<br />
+///   RBush uses the OMT (Overlap Minimizing Top-down) bulk-load algorithm.<br />
+///   NetTopologySuite STRtree builds on first query after all inserts.<br />
 ///   QuadTrees uses AddRange.
 /// </summary>
 [SimpleJob]

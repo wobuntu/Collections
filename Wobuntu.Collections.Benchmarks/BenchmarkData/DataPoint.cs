@@ -1,7 +1,7 @@
 namespace Wobuntu.Collections.Benchmarks.BenchmarkData;
 
 /// <summary>
-///   A minimal 2D point used as the item type in our RTree benchmarks.
+///   A minimal 2D point used as the item type in our RTree benchmarks.<br />
 ///   Proper Equals/GetHashCode overrides ensure correct Dictionary&lt;T,V&gt; behavior
 ///   inside RTree and produce numbers representative of real usage.
 /// </summary>
