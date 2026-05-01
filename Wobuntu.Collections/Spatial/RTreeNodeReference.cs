@@ -1,4 +1,3 @@
-#nullable enable
 using System.Runtime.InteropServices;
 
 namespace Wobuntu.Collections.Spatial;

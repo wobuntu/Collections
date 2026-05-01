@@ -1,15 +1,9 @@
-﻿#nullable enable
-
-using System;
-using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Linq;
-using System.Threading;
 
-namespace Wobuntu.Collections;
+namespace Wobuntu.Collections.Observable;
 
 /// <summary>
 ///   Represents a thread-safe, observable collection that maintains unique items in insertion order.
