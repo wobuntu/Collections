@@ -37,7 +37,7 @@ namespace Wobuntu.Collections.Spatial;
 /// </summary>
 /// <typeparam name="T">The type of data to contain within this tree.</typeparam>
 public class RTree<T>
-  : IEnumerable<T>
+  : ICollection<T>
   where T : notnull
 {
   private readonly Stack<int> _queryStack;
@@ -396,6 +396,25 @@ public class RTree<T>
 
   public bool Contains(T item) => item != null! && _itemToNodeIndex.ContainsKey(item);
 
+  public void CopyTo(T[] array, int arrayIndex)
+  {
+    ArgumentNullException.ThrowIfNull(array);
+    ArgumentOutOfRangeException.ThrowIfNegative(arrayIndex);
+    
+    var available = array.Length - arrayIndex;
+    if (available < Count)
+    {
+      throw new ArgumentException(
+        "The target array is not large enough to hold all items starting at the given index.",
+        nameof(array));
+    }
+
+    foreach (var (_, nodeIndex) in _itemToNodeIndex)
+    {
+      array[arrayIndex++] = Nodes[nodeIndex].Data!;
+    }
+  }
+
   public IEnumerator<T> GetEnumerator()
   {
     foreach (var (_, index) in _itemToNodeIndex)
@@ -405,6 +424,8 @@ public class RTree<T>
   }
 
   IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+  void ICollection<T>.Add(T item) => Add(item);
+  bool ICollection<T>.IsReadOnly => false;
 
   internal int ChooseInsertParent(RTreeBoundary itemBoundary)
   {

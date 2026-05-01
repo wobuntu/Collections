@@ -125,9 +125,9 @@ public class RTreeNodeTests
     tree.Add(3);
 
     // Assert: all items are still present
-    Assert.True(tree.Contains(1));
-    Assert.True(tree.Contains(2));
-    Assert.True(tree.Contains(3));
+    Assert.Contains(1, tree);
+    Assert.Contains(2, tree);
+    Assert.Contains(3, tree);
     Assert.Equal(3, tree.Count);
   }
 }

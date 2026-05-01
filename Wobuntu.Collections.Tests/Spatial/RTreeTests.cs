@@ -578,10 +578,10 @@ public class RTreeTests
 
     // Assert: All 4 items are present and queryable
     Assert.Equal(4, tree.Count);
-    Assert.True(tree.Contains(1));
-    Assert.True(tree.Contains(5));
-    Assert.True(tree.Contains(2));
-    Assert.True(tree.Contains(6));
+    Assert.Contains(1, tree);
+    Assert.Contains(5, tree);
+    Assert.Contains(2, tree);
+    Assert.Contains(6, tree);
 
     var results = new List<int>();
     tree.QueryTo(new RTreeBoundary(0, 0, 100, 30), results);
@@ -605,7 +605,7 @@ public class RTreeTests
     // Remove items and verify tree integrity at each step
     tree.Remove(0);
     Assert.Equal(7, tree.Count);
-    Assert.False(tree.Contains(0));
+    Assert.DoesNotContain(0, tree);
 
     allItems.Clear();
     tree.QueryTo(new RTreeBoundary(-10, 0, 200, 30), allItems);
@@ -662,11 +662,11 @@ public class RTreeTests
 
     // Act / Assert
     tree.Remove(1);
-    Assert.False(tree.Contains(1));
+    Assert.DoesNotContain(1, tree);
     Assert.Single(tree);
 
     tree.Add(1);
-    Assert.True(tree.Contains(1));
+    Assert.Contains(1, tree);
     Assert.Equal(2, tree.Count);
   }
 
@@ -880,8 +880,8 @@ public class RTreeTests
     // Assert
     Assert.Equal(3, added);
     Assert.Equal(5, tree.Count);
-    Assert.True(tree.Contains(3));
-    Assert.True(tree.Contains(5));
+    Assert.Contains(3, tree);
+    Assert.Contains(5, tree);
   }
 
   [Fact]
@@ -915,7 +915,6 @@ public class RTreeTests
     tree.Clear();
 
     // Assert
-    Assert.Equal(0, tree.Count);
     Assert.Equal(default, tree.Boundary);
     Assert.Empty(tree.ViewportItems);
     Assert.Empty(tree);
@@ -1013,12 +1012,12 @@ public class RTreeTests
 
     // Assert
     Assert.Equal(6, tree.Count);
-    Assert.False(tree.Contains(2));
-    Assert.False(tree.Contains(4));
-    Assert.False(tree.Contains(6));
-    Assert.False(tree.Contains(8));
-    Assert.True(tree.Contains(0));
-    Assert.True(tree.Contains(1));
+    Assert.DoesNotContain(2, tree);
+    Assert.DoesNotContain(4, tree);
+    Assert.DoesNotContain(6, tree);
+    Assert.DoesNotContain(8, tree);
+    Assert.Contains(0, tree);
+    Assert.Contains(1, tree);
   }
 
   [Fact]
@@ -1029,7 +1028,7 @@ public class RTreeTests
 
     // Act / Assert
     Assert.False(tree.Add(null!));
-    Assert.Equal(0, tree.Count);
+    Assert.Empty(tree);
   }
 
   [Fact]
@@ -1040,7 +1039,7 @@ public class RTreeTests
 
     // Act / Assert
     Assert.False(tree.Remove(99));
-    Assert.Equal(1, tree.Count);
+    Assert.Single(tree);
   }
 
   [Theory]
@@ -1068,7 +1067,7 @@ public class RTreeTests
     Assert.Equal(200, tree.Count);
     for (var index = 0; index < 200; index++)
     {
-      Assert.True(tree.Contains(index));
+      Assert.Contains(index, tree);
     }
 
     var results = new List<int>();
@@ -1130,7 +1129,7 @@ public class RTreeTests
     Assert.Equal(50, tree.Count);
     for (var index = 1; index < 100; index += 2)
     {
-      Assert.True(tree.Contains(index));
+      Assert.Contains(index, tree);
     }
 
     var results = new List<int>();
@@ -1213,5 +1212,70 @@ public class RTreeTests
     tree.Remove(5);
     Assert.Equal(9, tree.ViewportItems.Count);
     Assert.DoesNotContain(5, tree.ViewportItems);
+  }
+
+  [Fact]
+  public void CopyTo_CopiesAllItemsIntoArray()
+  {
+    // Arrange
+    var tree = new RTree<int>([1, 2, 3], x => new RTreeBoundary(x, 0, 1, 1));
+    var array = new int[3];
+
+    // Act
+    tree.CopyTo(array, 0);
+
+    // Assert
+    Assert.Equal([1, 2, 3], [.. array.Order()]);
+  }
+
+  [Fact]
+  public void CopyTo_WithOffset_PlacesItemsAtCorrectPosition()
+  {
+    // Arrange
+    var tree = new RTree<int>([1, 2, 3], x => new RTreeBoundary(x, 0, 1, 1));
+    var array = new int[5];
+
+    // Act
+    tree.CopyTo(array, 2);
+
+    // Assert
+    Assert.Equal(0, array[0]);
+    Assert.Equal(0, array[1]);
+    Assert.Equal([1, 2, 3], [.. array[2..].Order()]);
+  }
+
+  [Fact]
+  public void CopyTo_ArrayTooSmall_ThrowsArgumentException()
+  {
+    // Arrange
+    var tree = new RTree<int>([1, 2, 3], x => new RTreeBoundary(x, 0, 1, 1));
+
+    // Act / Assert
+    Assert.Throws<ArgumentException>(() => tree.CopyTo(new int[2], 0)); // Array itself too small
+    Assert.Throws<ArgumentException>(() => tree.CopyTo(new int[4], 2)); // Offset leaves insufficient space
+  }
+
+  [Fact]
+  public void CopyTo_NegativeArrayIndex_ThrowsArgumentOutOfRangeException()
+  {
+    // Arrange
+    var tree = new RTree<int>([1, 2, 3], x => new RTreeBoundary(x, 0, 1, 1));
+
+    // Act / Assert
+    Assert.Throws<ArgumentOutOfRangeException>(() => tree.CopyTo(new int[10], -1));
+  }
+
+  [Fact]
+  public void ICollection_Add_Duplicate_DoesNotThrowAndCountUnchanged()
+  {
+    // Arrange
+    var tree = new RTree<int>(x => new RTreeBoundary(x, 0, 1, 1)) { 1, 2 };
+    ICollection<int> collection = tree;
+
+    // Act
+    collection.Add(1); // duplicate — void Add must not throw
+
+    // Assert
+    Assert.Equal(2, tree.Count);
   }
 }
