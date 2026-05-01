@@ -1,7 +1,8 @@
 ﻿using System.Collections;
 using System.Collections.Specialized;
+using Wobuntu.Collections.Observable;
 
-namespace Wobuntu.Collections.Tests;
+namespace Wobuntu.Collections.Tests.Observable;
 
 // Justification for suppressed warning xUnit2017: "Do not use Contains() to check if a value exists in a collection"
 // We need to ensure, that the correct Contains() method is called, as we otherwise we cannot know which method
