@@ -25,15 +25,32 @@ public class BulkInsertBenchmarks
 
   private BenchmarkDataset _dataset = null!;
   private readonly RTreeOptions _ourOptions = new() { MaxEntriesPerNode = 12 };
+  private RTreeOptions _ourOptimizedOptions = null!;
 
   [GlobalSetup]
-  public void Setup() => _dataset = new BenchmarkDataset(N);
+  public void Setup()
+  {
+    _dataset = new BenchmarkDataset(N);
+    var estimatedNonLeafNodes = N / 11 + 1;
+    _ourOptimizedOptions = new RTreeOptions
+    {
+      MaxEntriesPerNode = 12,
+      InitialNodeCapacity = N + estimatedNonLeafNodes + 1,
+      InitialChildBlockCapacity = estimatedNonLeafNodes + 1,
+    };
+  }
 
   [Benchmark(Baseline = true)]
   public RTree<DataPoint> Wobuntu_BulkInsert() => new(
     _dataset.OurData.AsSpan(),
     static item => new RTreeBoundary(item.X, item.Y, 1.0f, 1.0f),
     _ourOptions);
+
+  [Benchmark]
+  public RTree<DataPoint> Wobuntu_BulkInsert_Optimized() => new(
+    _dataset.OurData.AsSpan(),
+    static item => new RTreeBoundary(item.X, item.Y, 1.0f, 1.0f),
+    _ourOptimizedOptions);
 
   [Benchmark]
   public RBush<RBushItem> RBush_BulkInsert()

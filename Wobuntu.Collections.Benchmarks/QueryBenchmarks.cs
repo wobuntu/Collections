@@ -24,6 +24,7 @@ public class QueryBenchmarks
   public int N { get; set; }
 
   private RTree<DataPoint> _ourTree = null!;
+  private RTree<DataPoint> _ourOptimizedTree = null!;
   private RBush<RBushItem> _rbushTree = null!;
   private STRtree<NtsItem> _ntsTree = null!;
   private QuadTreeRectF<QuadTreeItem> _quadTree = null!;
@@ -46,6 +47,17 @@ public class QueryBenchmarks
       dataset.OurData.AsSpan(),
       static p => new RTreeBoundary(p.X, p.Y, 1.0f, 1.0f),
       new RTreeOptions { MaxEntriesPerNode = 12 });
+
+    var estimatedNonLeafNodes = N / 11 + 1;
+    _ourOptimizedTree = new RTree<DataPoint>(
+      dataset.OurData.AsSpan(),
+      static p => new RTreeBoundary(p.X, p.Y, 1.0f, 1.0f),
+      new RTreeOptions
+      {
+        MaxEntriesPerNode = 12,
+        InitialNodeCapacity = N + estimatedNonLeafNodes + 1,
+        InitialChildBlockCapacity = estimatedNonLeafNodes + 1,
+      });
 
     _rbushTree = new RBush<RBushItem>(maxEntries: 12);
     _rbushTree.BulkLoad(dataset.RBushData);
@@ -88,8 +100,19 @@ public class QueryBenchmarks
     for (var index = 0; index < QueryCount; index++)
     {
       total += _ourTree.QueryTo(_ourQueryBoundaries[index], _queryResultBuffer);
-      // Our QueryTo does not allocate a collection, instead it requires a target to populate.
-      // Hence, clear after each round.
+      _queryResultBuffer.Clear();
+    }
+
+    return total;
+  }
+
+  [Benchmark]
+  public int Wobuntu_Query_Optimized()
+  {
+    var total = 0;
+    for (var index = 0; index < QueryCount; index++)
+    {
+      total += _ourOptimizedTree.QueryTo(_ourQueryBoundaries[index], _queryResultBuffer);
       _queryResultBuffer.Clear();
     }
 

@@ -302,7 +302,7 @@ public class RTreeTests
   [Theory]
   [InlineData(16)]
   [InlineData(2)]
-  public void Query_ForBoundaryWithIntersectingData_ReturnsExpectedNodes(ushort nodeCapacity)
+  public void Query_ForBoundaryWithIntersectingData_ReturnsExpectedNodes(byte nodeCapacity)
   {
     // Arrange
     var items = Enumerable.Range(0, 8).ToArray();
@@ -352,7 +352,7 @@ public class RTreeTests
   [Theory]
   [InlineData(16)]
   [InlineData(2)]
-  public void Query_ForBoundaryWithContainingData_ReturnsExpectedNodes(ushort nodeCapacity)
+  public void Query_ForBoundaryWithContainingData_ReturnsExpectedNodes(byte nodeCapacity)
   {
     // Arrange
     var items = Enumerable.Range(0, 8).ToArray();
@@ -395,7 +395,7 @@ public class RTreeTests
   [Theory]
   [InlineData(16)]
   [InlineData(2)]
-  public void Query_WithEmptyBoundaries_EmptyAreNotIncludedInResultSet(ushort nodeCapacity)
+  public void Query_WithEmptyBoundaries_EmptyAreNotIncludedInResultSet(byte nodeCapacity)
   {
     // Arrange
     var items = Enumerable.Range(0, 8).ToArray();
@@ -833,7 +833,9 @@ public class RTreeTests
   public void Viewport_AfterClearAndReset_ViewportItemsRepopulated()
   {
     // Arrange
-    var tree = new RTree<int>(x => new RTreeBoundary(x * 20, 0, 10, 10)) { 1, 2, 3, 4, 5 };
+    var options = new RTreeOptions { UpdateViewportItemsOnShrinkThreshold = 0 };
+    var tree = new RTree<int>(x => new RTreeBoundary(x * 20, 0, 10, 10), options) { 1, 2, 3, 4, 5 };
+
     tree.Viewport = new RTreeBoundary(0, -5, 110, 20); // covers all 5
     Assert.Equal(5, tree.ViewportItems.Count);
 
@@ -970,7 +972,7 @@ public class RTreeTests
     Assert.Contains(1, tree.ViewportItems);
     Assert.DoesNotContain(5, tree.ViewportItems);
 
-    // Act: move viewport to item 5's area
+    // Act: Move viewport to item 5's area
     tree.Viewport = new RTreeBoundary(490, -5, 30, 20);
 
     // Assert
@@ -991,7 +993,7 @@ public class RTreeTests
 
     Assert.Equal(2, tree.ViewportItems.Count);
 
-    // Act: expand viewport to also cover items 3 and 4
+    // Act: Expand viewport to also cover items 3 and 4
     tree.Viewport = new RTreeBoundary(0, -5, 90, 20); // Covers 1,2,3,4.
 
     // Assert
@@ -1309,7 +1311,7 @@ public class RTreeTests
   [InlineData(2)]
   [InlineData(3)]
   [InlineData(12)]
-  public void Query_AllItems_ReturnsAllRegardlessOfNodeSize(ushort nodeCapacity)
+  public void Query_AllItems_ReturnsAllRegardlessOfNodeSize(byte nodeCapacity)
   {
     // Arrange
     var items = Enumerable.Range(0, 30).ToArray();
@@ -1448,7 +1450,7 @@ public class RTreeTests
   [InlineData(2)]
   [InlineData(3)]
   [InlineData(12)]
-  public void Add_WithMinimalCapacity_ForcesResizeAndAllItemsPresent(ushort maxEntries)
+  public void Add_WithMinimalCapacity_ForcesResizeAndAllItemsPresent(byte maxEntries)
   {
     // Arrange: minimal initial capacities force array resizes on nearly every allocation
     var options = new RTreeOptions
@@ -1481,7 +1483,7 @@ public class RTreeTests
   [InlineData(2)]
   [InlineData(3)]
   [InlineData(12)]
-  public void AddRange_WithMinimalCapacity_ForcesResizeAndAllItemsPresent(ushort maxEntries)
+  public void AddRange_WithMinimalCapacity_ForcesResizeAndAllItemsPresent(byte maxEntries)
   {
     // Arrange
     var options = new RTreeOptions
@@ -1505,7 +1507,7 @@ public class RTreeTests
   [InlineData(2)]
   [InlineData(3)]
   [InlineData(12)]
-  public void Remove_WithMinimalCapacity_ForcesResizeAndRemainingItemsPresent(ushort maxEntries)
+  public void Remove_WithMinimalCapacity_ForcesResizeAndRemainingItemsPresent(byte maxEntries)
   {
     // Arrange
     var options = new RTreeOptions
@@ -1543,7 +1545,7 @@ public class RTreeTests
   [InlineData(2)]
   [InlineData(3)]
   [InlineData(12)]
-  public void AddRemoveAdd_WithMinimalCapacity_ForcesResizeAndAllItemsPresent(ushort maxEntries)
+  public void AddRemoveAdd_WithMinimalCapacity_ForcesResizeAndAllItemsPresent(byte maxEntries)
   {
     // Arrange
     var options = new RTreeOptions
@@ -1582,7 +1584,7 @@ public class RTreeTests
   [InlineData(2)]
   [InlineData(3)]
   [InlineData(12)]
-  public void Viewport_WithMinimalCapacity_ForcesResizeAndViewportCorrect(ushort maxEntries)
+  public void Viewport_WithMinimalCapacity_ForcesResizeAndViewportCorrect(byte maxEntries)
   {
     // Arrange
     var options = new RTreeOptions
@@ -1600,17 +1602,17 @@ public class RTreeTests
       tree.Add(index);
     }
 
-    // Act: set viewport covering items 0-9
+    // Act: Set viewport covering items 0-9
     tree.Viewport = new RTreeBoundary(-5, -5, 100, 15);
 
     // Assert
     Assert.Equal(10, tree.ViewportItems.Count);
 
-    // Act: add more items inside viewport
+    // Act: Add more items inside viewport
     tree.Add(1000); // at x=10000, outside viewport
     Assert.Equal(10, tree.ViewportItems.Count);
 
-    // Act: remove an item inside viewport
+    // Act: Remove an item inside viewport
     tree.Remove(5);
     Assert.Equal(9, tree.ViewportItems.Count);
     Assert.DoesNotContain(5, tree.ViewportItems);

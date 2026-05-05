@@ -22,7 +22,8 @@ internal struct RTreeNode<T>
 
   internal int FirstChildReferenceIndex;
   internal ushort ChildrenCount;
-  private ushort _childrenVisibleInViewport;
+  private byte _childrenVisibleInViewport;
+  private byte _childrenFullyVisibleInViewport;
 
   internal RTreeBoundary Boundary;
   internal T? Data;
@@ -39,6 +40,7 @@ internal struct RTreeNode<T>
     node.FirstChildReferenceIndex = NullIndex;
     node.ChildrenCount = 0;
     node._childrenVisibleInViewport = 0;
+    node._childrenFullyVisibleInViewport = 0;
 
     node.Boundary = boundary;
     node.Data = data;
@@ -59,6 +61,7 @@ internal struct RTreeNode<T>
     node.FirstChildReferenceIndex = childBlockIndex * owner.MaxEntriesPerNode;
     node.ChildrenCount = 0;
     node._childrenVisibleInViewport = 0;
+    node._childrenFullyVisibleInViewport = 0;
 
     node.Boundary = new RTreeBoundary();
     node.Data = default;
@@ -74,7 +77,8 @@ internal struct RTreeNode<T>
     }
 
     node._childrenVisibleInViewport = 0;
-    
+    node._childrenFullyVisibleInViewport = 0;
+
     node.Data = default;
     node.FirstChildReferenceIndex = NullIndex;
     node.ChildrenCount = 0;
@@ -93,7 +97,7 @@ internal struct RTreeNode<T>
     get => FirstChildReferenceIndex < 0;
   }
 
-  internal readonly ushort ChildrenVisibleInViewport
+  internal readonly byte ChildrenVisibleInViewport
   {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     get
@@ -103,12 +107,20 @@ internal struct RTreeNode<T>
     }
   }
 
+  internal bool IsFullyVisibleInViewport
+  {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    get => _childrenFullyVisibleInViewport >= ChildrenCount
+           && _childrenFullyVisibleInViewport > 0;
+  }
+
   internal readonly bool IsVisibleInViewport
   {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     get
     {
       Debug.Assert(IsLeaf, "For correct semantics, don't call this on non-leafs.");
+      Debug.Assert(_childrenVisibleInViewport <= 1, "Must not become > 1 for leaf nodes.");
       return _childrenVisibleInViewport > 0;
     }
   }
@@ -123,7 +135,8 @@ internal struct RTreeNode<T>
       return;
     }
 
-    _childrenVisibleInViewport = value ? (ushort)1 : (ushort)0;
+    _childrenVisibleInViewport = value ? (byte)1 : (byte)0;
+    _childrenFullyVisibleInViewport = _childrenVisibleInViewport;
 
     if (ParentIndex < 0)
     {
@@ -131,7 +144,8 @@ internal struct RTreeNode<T>
     }
 
     ref var parent = ref owner.Nodes[ParentIndex];
-    parent.UpdateChildrenVisibleInViewport(owner, value ? 1 : -1);
+    var delta = value ? 1 : -1;
+    parent.UpdateChildrenVisibleInViewport(owner, parent.ChildrenCount, delta, delta);
   }
 
   [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -148,18 +162,24 @@ internal struct RTreeNode<T>
     return maxEntriesPerNode < ChildrenCount;
   }
 
-  internal void UpdateChildrenVisibleInViewport(RTree<T> owner, int delta)
+  internal void UpdateChildrenVisibleInViewport(RTree<T> owner, int childrenCount, int visibleDelta, int fullyVisibleDelta)
   {
     Debug.Assert(!IsLeaf, "Must not be called on leaf nodes.");
-    Debug.Assert(_childrenVisibleInViewport + delta >= 0, "Must not ever become negative.");
+    Debug.Assert(_childrenVisibleInViewport + visibleDelta >= 0, "Must not ever become negative.");
+    Debug.Assert(_childrenFullyVisibleInViewport + fullyVisibleDelta >= 0, "Must not ever become negative.");
 
-    if (delta == 0)
+    if (visibleDelta == 0 && fullyVisibleDelta == 0)
     {
       return;
     }
 
-    var oldValue = _childrenVisibleInViewport;
-    _childrenVisibleInViewport += (ushort)delta;
+    var oldVisible = _childrenVisibleInViewport;
+    var oldFullyVisible = childrenCount == _childrenFullyVisibleInViewport;
+    
+    _childrenVisibleInViewport += (byte)visibleDelta;
+    _childrenFullyVisibleInViewport += (byte)fullyVisibleDelta;
+
+    Debug.Assert(_childrenFullyVisibleInViewport <= _childrenVisibleInViewport);
 
     if (ParentIndex < 0)
     {
@@ -167,17 +187,34 @@ internal struct RTreeNode<T>
     }
 
     ref var parent = ref owner.Nodes[ParentIndex];
-    if (_childrenVisibleInViewport <= 0 && oldValue > 0)
+
+    var parentVisibleDelta = 0;
+    if (_childrenVisibleInViewport <= 0 && oldVisible > 0)
     {
       // If value becomes 0: No more children are in the viewport, hence notify
       // the parent as well that this node is now no longer part of the viewport nodes.
-      parent.UpdateChildrenVisibleInViewport(owner, -1);
+      parentVisibleDelta = -1;
     }
-    else if (_childrenVisibleInViewport > 0 && oldValue <= 0)
+    else if (_childrenVisibleInViewport > 0 && oldVisible <= 0)
     {
       // If value becomes > 0: No children have been tracked in the viewport before, hence
       // notify the parent that this node is now part of the viewport nodes.
-      parent.UpdateChildrenVisibleInViewport(owner, 1);
+      parentVisibleDelta = 1;
+    }
+
+    var parentFullyVisibleDelta = 0;
+    if (!oldFullyVisible && IsFullyVisibleInViewport)
+    {
+      parentFullyVisibleDelta = 1;
+    }
+    else if (oldFullyVisible && !IsFullyVisibleInViewport)
+    {
+      parentFullyVisibleDelta = -1;
+    }
+
+    if (parentVisibleDelta != 0 || parentFullyVisibleDelta != 0)
+    {
+      parent.UpdateChildrenVisibleInViewport(owner, parent.ChildrenCount, parentVisibleDelta, parentFullyVisibleDelta);
     }
   }
 
@@ -201,7 +238,8 @@ internal struct RTreeNode<T>
 
     if (child._childrenVisibleInViewport > 0)
     {
-      UpdateChildrenVisibleInViewport(owner, 1);
+      var childFullyVisibleDelta = child.IsFullyVisibleInViewport ? 1 : 0;
+      UpdateChildrenVisibleInViewport(owner, ChildrenCount - 1, 1, childFullyVisibleDelta);
     }
 
     Debug.Assert(!IsOverFull(owner.MaxEntriesPerNode), "Must not create overfull nodes.");
@@ -233,7 +271,8 @@ internal struct RTreeNode<T>
 
       if (child._childrenVisibleInViewport > 0)
       {
-        UpdateChildrenVisibleInViewport(owner, 1);
+        var childFullyVisibleDelta = child.IsFullyVisibleInViewport ? 1 : 0;
+        UpdateChildrenVisibleInViewport(owner, ChildrenCount - 1, 1, childFullyVisibleDelta);
       }
     }
 
@@ -275,13 +314,23 @@ internal struct RTreeNode<T>
     child.ParentIndex = NullIndex;
     UpdateBoundary(owner);
 
-    var isLeaf = child.IsLeaf;
-    var shouldUpdateParent = (isLeaf && child.IsVisibleInViewport)
-                             || (!isLeaf && child.ChildrenVisibleInViewport > 0);
+    var visibleDelta = 0;
+    var fullyVisibleDelta = 0;
 
-    if (shouldUpdateParent)
+    var isLeaf = child.IsLeaf;
+    if (isLeaf && child.IsVisibleInViewport)
     {
-      UpdateChildrenVisibleInViewport(owner, -1);
+      visibleDelta = fullyVisibleDelta = -1;
+    }
+    else if (!isLeaf && child.ChildrenVisibleInViewport > 0)
+    {
+      visibleDelta = -1;
+      fullyVisibleDelta = child.IsFullyVisibleInViewport ? -1 : 0;
+    }
+
+    if (visibleDelta != 0)
+    {
+      UpdateChildrenVisibleInViewport(owner, ChildrenCount + 1, visibleDelta, fullyVisibleDelta);
     }
   }
 
@@ -373,12 +422,14 @@ internal struct RTreeNode<T>
     if (branchRoot is { ChildrenVisibleInViewport: > 0, ParentIndex: >= 0 })
     {
       ref var parent = ref owner.Nodes[branchRoot.ParentIndex];
-      parent.UpdateChildrenVisibleInViewport(owner, -1);
+      var fullyVisibleDelta = branchRoot.IsFullyVisibleInViewport ? -1 : 0;
+      parent.UpdateChildrenVisibleInViewport(owner, parent.ChildrenCount, -1, fullyVisibleDelta);
     }
 
     var indicesSpan = nodeIndices.AsSpan(0, branchRoot.ChildrenCount);
     branchRoot.ChildrenCount = 0; // Reset before freeing to avoid double-detach
     branchRoot._childrenVisibleInViewport = 0;
+    branchRoot._childrenFullyVisibleInViewport = 0; // TODO: Probably needs reset on each level
     branchRoot.Boundary = new RTreeBoundary();
 
     var branchRootIndex = branchRoot.OwnIndex;
@@ -395,7 +446,8 @@ internal struct RTreeNode<T>
     if (branchRoot.ChildrenVisibleInViewport > 0 && branchRoot.ParentIndex >= 0)
     {
       ref var parent = ref owner.Nodes[branchRoot.ParentIndex];
-      parent.UpdateChildrenVisibleInViewport(owner, 1);
+      var fullyVisibleDelta = branchRoot.IsFullyVisibleInViewport ? 1 : 0;
+      parent.UpdateChildrenVisibleInViewport(owner, parent.ChildrenCount, 1, fullyVisibleDelta);
     }
 
     ArrayPool<int>.Shared.Return(nodeIndices, true);
@@ -405,7 +457,7 @@ internal struct RTreeNode<T>
   {
     var nodeIndex = forNode.OwnIndex;
     ref var newParent = ref AllocateNonLeaf(owner);
-    
+
     // Allocation of a parent layer may invalidate forNode reference, hence refetch after allocation.
     forNode = ref owner.Nodes[nodeIndex];
     newParent.Boundary = forNode.Boundary;
@@ -445,6 +497,7 @@ internal struct RTreeNode<T>
     if (forNode._childrenVisibleInViewport > 0)
     {
       newParent._childrenVisibleInViewport = 1;
+      newParent._childrenFullyVisibleInViewport = forNode.IsFullyVisibleInViewport ? (byte)1 : (byte)0;
     }
 
     return ref newParent;

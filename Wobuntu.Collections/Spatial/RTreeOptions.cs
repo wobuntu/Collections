@@ -10,8 +10,8 @@ public class RTreeOptions
   private const string PercentageOutOfRange = "The value must be a number between 0 and 1.";
   private const string InitialCapacityMustBeBigger0 = "The initial capacity must be at least 1.";
 
-  public const ushort DefaultMaxEntriesPerNode = 12;
-  public const ushort MinEntriesPerNodeMinimum = 2;
+  public const byte DefaultMaxEntriesPerNode = 12;
+  public const byte MinEntriesPerNodeMinimum = 2;
   public const int DefaultInitialNodeCapacity = 256;
   public const int DefaultInitialChildBlockCapacity = 64;
   public const int DefaultInitialQueryStackCapacity = 64;
@@ -19,7 +19,7 @@ public class RTreeOptions
 
   internal const float MinEntriesRatio = 0.4f;
 
-  public ushort MaxEntriesPerNode
+  public byte MaxEntriesPerNode
   {
     get;
     init
@@ -33,7 +33,7 @@ public class RTreeOptions
     }
   } = DefaultMaxEntriesPerNode;
 
-  public ushort MinEntriesPerNode => DeriveMinEntriesFromMaxEntriesPerNode(MaxEntriesPerNode);
+  public byte MinEntriesPerNode => DeriveMinEntriesFromMaxEntriesPerNode(MaxEntriesPerNode);
 
   /// <summary>
   ///   Gets or sets the threshold used on shrinking the <see cref="RTree{T}.Viewport"/>, which determines
@@ -116,14 +116,14 @@ public class RTreeOptions
     }
   } = DefaultInitialViewportItemsCapacity;
 
-  internal static ushort DeriveMinEntriesFromMaxEntriesPerNode(int maxEntries)
+  internal static byte DeriveMinEntriesFromMaxEntriesPerNode(int maxEntries)
   {
     if (maxEntries < MinEntriesPerNodeMinimum)
     {
       maxEntries = MinEntriesPerNodeMinimum;
     }
 
-    var minEntries = Math.Max(MinEntriesPerNodeMinimum, (int)(maxEntries * MinEntriesRatio));
-    return (ushort)minEntries;
+    var minEntries = Math.Max(MinEntriesPerNodeMinimum, (byte)(maxEntries * MinEntriesRatio));
+    return minEntries;
   }
 }

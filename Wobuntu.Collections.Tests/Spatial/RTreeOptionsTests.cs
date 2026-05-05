@@ -11,7 +11,7 @@ public class RTreeOptionsTests
 
     // Must not throw:
     _ = new RTreeOptions { MaxEntriesPerNode = 2 };
-    _ = new RTreeOptions { MaxEntriesPerNode = ushort.MaxValue };
+    _ = new RTreeOptions { MaxEntriesPerNode = byte.MaxValue };
   }
 
   [Fact]
@@ -72,7 +72,7 @@ public class RTreeOptionsTests
   [InlineData(13, 5)]
   [InlineData(15, 6)]
   [InlineData(18, 7)]
-  public void Init_MinEntriesPerNode_CorrectlyDerivedFromMaxEntriesPerNode(ushort maxEntries, ushort expectedMinEntries)
+  public void Init_MinEntriesPerNode_CorrectlyDerivedFromMaxEntriesPerNode(byte maxEntries, ushort expectedMinEntries)
   {
     var options = new RTreeOptions { MaxEntriesPerNode = maxEntries };
     Assert.Equal(expectedMinEntries, options.MinEntriesPerNode);

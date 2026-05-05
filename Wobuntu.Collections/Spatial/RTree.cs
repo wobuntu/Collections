@@ -399,7 +399,7 @@ public class RTree<T>
   {
     ArgumentNullException.ThrowIfNull(array);
     ArgumentOutOfRangeException.ThrowIfNegative(arrayIndex);
-    
+
     var available = array.Length - arrayIndex;
     if (available < Count)
     {
@@ -887,6 +887,7 @@ public class RTree<T>
 
     if (oldViewport.IsEmpty)
     {
+      // Hot path if previously no viewport was set, just add all items intersecting the viewport.
       AddNewIntersectingViewportItems(newViewport);
       return;
     }
@@ -895,24 +896,38 @@ public class RTree<T>
     {
       // Hot path for zooming in/out and panning.
       // No need to check for new items, but remove no longer contained viewport items.
-      RemoveNoLongerIntersectingViewportItems(newViewport);
+      Span<RTreeBoundary> removeRegions = stackalloc RTreeBoundary[4];
+      var removeRegionCount = ComputeCutoffRegions(oldViewport, newViewport, removeRegions);
+
+      for (var index = 0; index < removeRegionCount; index++)
+      {
+        RemoveNoLongerIntersectingViewportItems(removeRegions[index], newViewport);
+      }
+
       return;
     }
 
-    if (oldViewport.Intersects(newViewport))
+    if (!oldViewport.Intersects(newViewport))
     {
-      // Hot path for intersections (very likely, e.g. on panning), remove items from the old viewport, which are no
-      // longer part of it, then add items from the overall item list which are new.
-      RemoveNoLongerIntersectingViewportItems(newViewport);
-    }
-    else
-    {
-      // At this point: the new viewport does not intersect with the old viewport at all,
-      // all existing items can be cleared.
       ResetViewportItems();
+      AddNewIntersectingViewportItems(newViewport);
+      return;
     }
 
-    AddNewIntersectingViewportItems(newViewport);
+    // At this point, we have a partial overlap: update only the cutoffs between the old and new viewport.
+    Span<RTreeBoundary> regions = stackalloc RTreeBoundary[4];
+
+    var regionCount = ComputeCutoffRegions(oldViewport, newViewport, regions);
+    for (var index = 0; index < regionCount; index++)
+    {
+      RemoveNoLongerIntersectingViewportItems(regions[index], newViewport);
+    }
+
+    regionCount = ComputeCutoffRegions(newViewport, oldViewport, regions);
+    for (var index = 0; index < regionCount; index++)
+    {
+      AddNewIntersectingViewportItems(regions[index]);
+    }
   }
 
   private void ResetViewportItems()
@@ -959,12 +974,13 @@ public class RTree<T>
     _viewportItems.Clear();
   }
 
-  private void RemoveNoLongerIntersectingViewportItems(RTreeBoundary viewport)
+  private void RemoveNoLongerIntersectingViewportItems(RTreeBoundary cutoffRegion, RTreeBoundary viewport)
   {
     Debug.Assert(
       !viewport.IsEmpty,
       $"Should not be called if the new viewport is empty, instead {nameof(ResetViewportItems)} " +
       $"should have been called directly.");
+    Debug.Assert(!cutoffRegion.IsEmpty);
 
     if (_viewport.IsEmpty)
     {
@@ -994,10 +1010,9 @@ public class RTree<T>
           continue;
         }
 
-        if (current.Boundary.Intersects(viewport))
+        if (!current.Boundary.Intersects(cutoffRegion) || current.Boundary.Intersects(viewport))
         {
-          // Not yet part of viewport items, but as adding/removing is done in separate methods,
-          // this node may just not yet have been added by the AddNewIntersectingViewportItems method.
+          // Not in cutoff region, or partially still visible in viewport.
           continue;
         }
 
@@ -1014,10 +1029,8 @@ public class RTree<T>
         continue;
       }
 
-      if (viewport.Contains(current.Boundary))
+      if (!cutoffRegion.Intersects(current.Boundary))
       {
-        // All items in this subtree are still within the new viewport, nothing to remove.
-        Debug.Assert(current.ChildrenCount == current.ChildrenVisibleInViewport);
         continue;
       }
 
@@ -1072,6 +1085,12 @@ public class RTree<T>
       }
 
       // This is a non-leaf node.
+      if (current.IsFullyVisibleInViewport)
+      {
+        // All children of this node are already within the viewport.
+        continue;
+      }
+
       if (!viewport.Intersects(current.Boundary))
       {
         // Note that the item could still exist in the _viewportItems, which is valid,
@@ -1179,5 +1198,56 @@ public class RTree<T>
     var blockIndex = firstChildIndex / MaxEntriesPerNode;
     ChildReferences[firstChildIndex].NodeIndex = _freeChildBlockHead;
     _freeChildBlockHead = blockIndex;
+  }
+
+  private static int ComputeCutoffRegions(RTreeBoundary first, RTreeBoundary second, Span<RTreeBoundary> cutoffs)
+  {
+    if (first.IsEmpty)
+    {
+      return 0; // No cutoffs, as nothing to remove from or add to.
+    }
+
+    if (second.IsEmpty)
+    {
+      cutoffs[0] = first; // Full boundary.
+      return 1;
+    }
+
+    var count = 0;
+    var horizontalX = Math.Max(second.X, first.X);
+    var horizontalRight = Math.Min(second.Right, first.Right);
+    var horizontalWidth = horizontalRight - horizontalX;
+
+    var leftWidth = second.X - first.X;
+    if (leftWidth > 0)
+    {
+      // Full left segment of "first" not covered by "second".
+      cutoffs[count++] = new RTreeBoundary(first.X, first.Y, leftWidth, first.Height);
+    }
+
+    var topHeight = second.Y - first.Y;
+    if (topHeight > 0 && horizontalWidth > 0)
+    {
+      // When the boundaries differ in 2 dimensions, always gets the top segment of "first" not covered by "second",
+      // but without the area of the left/right segments.
+      cutoffs[count++] = new RTreeBoundary(horizontalX, first.Y, horizontalWidth, topHeight);
+    }
+
+    var rightWidth = first.Right - second.Right;
+    if (rightWidth > 0)
+    {
+      // Full right segment of "first" not covered by "second".
+      cutoffs[count++] = new RTreeBoundary(second.Right, first.Y, rightWidth, first.Height);
+    }
+
+    var bottomHeight = first.Bottom - second.Bottom;
+    if (bottomHeight > 0 && horizontalWidth > 0)
+    {
+      // When the boundaries differ in 2 dimensions, always gets the top segment of "first" not covered by "second",
+      // but without the area of the left/right segments.
+      cutoffs[count++] = new RTreeBoundary(horizontalX, second.Bottom, horizontalWidth, bottomHeight);
+    }
+
+    return count;
   }
 }
