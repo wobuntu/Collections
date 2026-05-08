@@ -29,11 +29,7 @@ namespace Wobuntu.Collections.Observable;
 /// <typeparam name="T">The type of elements in the set.</typeparam>
 [DebuggerDisplay($"Count = {{{nameof(Count)}}}")]
 public class SynchronizedObservableOrderedSet<T>
-  : IList<T>,
-    IList,
-    IReadOnlyList<T>,
-    ISet<T>,
-    IReadOnlySet<T>,
+  : IOrderedSet<T>,
     INotifyCollectionChanged,
     INotifyPropertyChanged
     where T : notnull
@@ -508,6 +504,75 @@ public class SynchronizedObservableOrderedSet<T>
     RemoveItems(itemsToRemove);
   }
 
+  public void UnionWith(IEnumerable<T> other)
+  {
+    ArgumentNullException.ThrowIfNull(other);
+
+    // Union with self is a no-op since all items already exist.
+    if (ReferenceEquals(other, this))
+    {
+      return;
+    }
+
+    if (other is SynchronizedObservableOrderedSet<T> synchronizedSet)
+    {
+      using var _ = new WriteReadLockScope(this, synchronizedSet);
+      InsertItems(_ordered.Count, synchronizedSet._ordered);
+      return;
+    }
+
+    using var __ = new WriteLockScope(this);
+    InsertItems(_ordered.Count, other);
+  }
+
+  public void IntersectThenUnionWith(IEnumerable<T> other)
+  {
+    ArgumentNullException.ThrowIfNull(other);
+
+    if (ReferenceEquals(other, this))
+    {
+      return;
+    }
+
+    if (other is SynchronizedObservableOrderedSet<T> synchronizedSet)
+    {
+      using var _ = new WriteReadLockScope(this, synchronizedSet);
+      var toRemove = new List<T>();
+      for (var index = 0; index < _ordered.Count; index++)
+      {
+        if (!synchronizedSet._hashed.Contains(_ordered[index]))
+        {
+          toRemove.Add(_ordered[index]);
+        }
+      }
+
+      RemoveItems(toRemove);
+      InsertItems(_ordered.Count, synchronizedSet._ordered);
+
+      return;
+    }
+
+    using var __ = new WriteLockScope(this);
+
+    if (_ordered.Count == 0)
+    {
+      return;
+    }
+
+    var otherSet = other as IReadOnlySet<T> ?? other.ToHashSet();
+    var itemsToRemove = new List<T>();
+    for (var index = 0; index < _ordered.Count; index++)
+    {
+      if (!otherSet.Contains(_ordered[index]))
+      {
+        itemsToRemove.Add(_ordered[index]);
+      }
+    }
+
+    RemoveItems(itemsToRemove);
+    InsertItems(_ordered.Count, otherSet);
+  }
+
   /// <inheritdoc />
   public bool IsProperSubsetOf(IEnumerable<T> other)
   {
@@ -678,27 +743,6 @@ public class SynchronizedObservableOrderedSet<T>
 
     RemoveItems(itemsToRemove);
     InsertItems(_ordered.Count, itemsToAdd);
-  }
-
-  public void UnionWith(IEnumerable<T> other)
-  {
-    ArgumentNullException.ThrowIfNull(other);
-
-    // Union with self is a no-op since all items already exist.
-    if (ReferenceEquals(other, this))
-    {
-      return;
-    }
-
-    if (other is SynchronizedObservableOrderedSet<T> synchronizedSet)
-    {
-      using var _ = new WriteReadLockScope(this, synchronizedSet);
-      InsertItems(_ordered.Count, synchronizedSet._ordered);
-      return;
-    }
-
-    using var __ = new WriteLockScope(this);
-    InsertItems(_ordered.Count, other);
   }
 
   protected virtual void ClearItems()

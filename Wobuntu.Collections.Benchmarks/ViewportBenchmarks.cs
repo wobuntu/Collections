@@ -364,7 +364,7 @@ public class ViewportBenchmarks
   /// <summary>
   ///   Updates <paramref name="set"/> to exactly match <paramref name="newItems"/> using a single diff pass:
   ///   removes items that are no longer in the result, then adds newly visible items.
-  ///   Fires at most two batched CollectionChanged events per call (one Remove, one Add).
+  ///   Fires two batched CollectionChanged events per call (one Remove or Clear, one Add).
   /// </summary>
   private static void SyncViewportSet<T>(SynchronizedObservableOrderedSet<T> set, IEnumerable<T> newItems)
     where T : notnull

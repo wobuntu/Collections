@@ -1,10 +1,11 @@
+using Wobuntu.Collections.Observable;
 using System;
 using System.Buffers;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
-using Wobuntu.Collections.Observable;
 
 // Disabling some resharper suggestions as they are hurting performance in hot paths of this file:
 // ReSharper disable ForeachCanBePartlyConvertedToQueryUsingAnotherGetEnumerator
@@ -48,6 +49,7 @@ public class RTree<T>
   private readonly double _leafNodeVirtualFullness;
 
   private readonly SynchronizedObservableOrderedSet<T> _viewportItems;
+  private readonly HashSet<T> _viewportUpdateCache;
 
   private int _nodeCount;
 
@@ -91,6 +93,7 @@ public class RTree<T>
     _itemToNodeIndex = new Dictionary<T, int>(options.InitialNodeCapacity);
     _queryStack = new Stack<int>(options.InitialQueryStackCapacity);
     _viewportItems = new SynchronizedObservableOrderedSet<T>(options.InitialViewportItemsCapacity);
+    _viewportUpdateCache = new HashSet<T>(options.InitialViewportItemsCapacity);
 
     Nodes = new RTreeNode<T>[options.InitialNodeCapacity];
     ChildReferences = new RTreeNodeReference[options.InitialChildBlockCapacity * MaxEntriesPerNode];
@@ -107,14 +110,14 @@ public class RTree<T>
     get => _viewport;
     set
     {
-      if (_viewport == value)
+      if (_viewport.Equals(in value))
       {
         return;
       }
 
       if (value.IsEmpty && !_actualViewport.IsEmpty)
       {
-        ResetViewportItems();
+        _viewportItems.Clear();
         _actualViewport = new RTreeBoundary();
         _viewport = value;
         return;
@@ -125,7 +128,7 @@ public class RTree<T>
       // outside the viewport, however, this should be beneficial for performance during zooming and panning.
       // The threshold for an actual resize can be influenced by the options passed to the RTree, which
       // also allows to completely disable caching.
-      if (_actualViewport.Contains(value))
+      if (_actualViewport.Contains(in value))
       {
         var width = _actualViewport.Width;
         var deltaWidth = (width - value.Width) / width;
@@ -167,17 +170,44 @@ public class RTree<T>
     }
 
     InsertNode(ref node);
+
+    if (_actualViewport.Intersects(in node.Boundary))
+    {
+      var actuallyAdded = _viewportItems.Add(item);
+      Debug.Assert(actuallyAdded);
+    }
+
     return true;
   }
 
   public int AddRange(Span<T> items)
   {
-    if (Count == 0 && items.Length > MaxEntriesPerNode)
+    if (items.Length == 0)
     {
-      return BulkInitialize(items);
+      return 0;
     }
 
+    if (Count == 0 && items.Length > MaxEntriesPerNode)
+    {
+      var result = BulkInitialize(items);
+
+      if (!_actualViewport.IsEmpty
+          && _actualViewport.IntersectsUnchecked(in Nodes[RootIndex].Boundary))
+      {
+        // Not directly querying to _viewPortItems to avoid unnecessary locks/collection changed events.
+        Debug.Assert(_viewportUpdateCache.Count == 0);
+        QueryTo(in _actualViewport, _viewportUpdateCache);
+        _viewportItems.AddRange(_viewportUpdateCache);
+        _viewportUpdateCache.Clear();
+      }
+
+      return result;
+    }
+
+    var shouldCheckViewportItems = !_actualViewport.IsEmpty;
+    var addedBoundary = new RTreeBoundary();
     var previousCount = _itemToNodeIndex.Count;
+
     for (var index = 0; index < items.Length; index++)
     {
       var item = items[index];
@@ -197,6 +227,19 @@ public class RTree<T>
       }
 
       InsertNode(ref node);
+
+      if (shouldCheckViewportItems)
+      {
+        addedBoundary = addedBoundary.Union(in node.Boundary);
+      }
+    }
+
+    if (!addedBoundary.IsEmpty)
+    {
+      Debug.Assert(_viewportUpdateCache.Count == 0);
+      QueryTo(in _actualViewport, _viewportUpdateCache);
+      _viewportItems.AddRange(_viewportUpdateCache);
+      _viewportUpdateCache.Clear();
     }
 
     return _itemToNodeIndex.Count - previousCount;
@@ -227,6 +270,16 @@ public class RTree<T>
       return false;
     }
 
+    if (!_actualViewport.IsEmpty)
+    {
+      ref readonly var node = ref Nodes[nodeIndex];
+      if (_actualViewport.IntersectsUnchecked(in node.Boundary))
+      {
+        var actuallyRemoved = _viewportItems.Remove(item);
+        Debug.Assert(actuallyRemoved || node.Boundary.IsEmpty);
+      }
+    }
+
     _itemToNodeIndex.Remove(item);
 
     ref var oldRootNode = ref Nodes[RootIndex];
@@ -249,6 +302,27 @@ public class RTree<T>
   public void RemoveRange(IEnumerable<T> items)
   {
     ArgumentNullException.ThrowIfNull(items);
+
+    var shouldCheckViewportItems = !_actualViewport.IsEmpty;
+    if (shouldCheckViewportItems)
+    {
+      if (items is not IList<T>
+          or not IReadOnlyList<T>
+          or not IList
+          or not ICollection<T>
+          or not IReadOnlyCollection<T>
+          or not ICollection)
+      {
+        // Avoid duplicate enumerable evaluation for deleting items from the viewport (see end).
+        // We do this separately, because this will be faster on the observable ordered set than using
+        // single calls, especially due to reduced collection changed events on the consumer side.
+        items = items.ToArray();
+      }
+    }
+
+    var removalBoundary = new RTreeBoundary();
+
+    // ReSharper disable once PossibleMultipleEnumeration : Intended, see comment above.
     foreach (var item in items)
     {
       if (item == null! || !_itemToNodeIndex.TryGetValue(item, out var nodeIndex))
@@ -271,6 +345,12 @@ public class RTree<T>
         continue;
       }
 
+      if (shouldCheckViewportItems)
+      {
+        ref readonly var node = ref Nodes[nodeIndex];
+        removalBoundary = removalBoundary.Union(in node.Boundary);
+      }
+
       if (!RemoveNode(nodeIndex))
       {
         continue;
@@ -291,11 +371,17 @@ public class RTree<T>
 
       RTreeNode<T>.Free(this, ref oldRoot);
     }
+
+    if (!removalBoundary.IsEmpty)
+    {
+      // ReSharper disable once PossibleMultipleEnumeration : Intended, see comment above.
+      _viewportItems.RemoveRange(items);
+    }
   }
 
   public void Clear()
   {
-    ResetViewportItems();
+    _viewportItems.Clear();
 
     _nodeCount = 0;
     _childReferencesCount = 0;
@@ -319,12 +405,12 @@ public class RTree<T>
   ///   The target collection, to which the items of the query result are being added.<br />
   ///   The collection is not cleared by this method.
   /// </param>
-  public int QueryTo(RTreeBoundary searchBoundary, ICollection<T> targetCollection)
+  public int QueryTo(in RTreeBoundary searchBoundary, ICollection<T> targetCollection)
   {
     ArgumentNullException.ThrowIfNull(targetCollection);
 
     ref readonly var root = ref Nodes[RootIndex];
-    if (!root.Boundary.Intersects(searchBoundary))
+    if (!root.Boundary.Intersects(in searchBoundary))
     {
       return 0;
     }
@@ -568,11 +654,6 @@ public class RTree<T>
     node = ref Nodes[nodeIndex];
     targetNode.AddChildDirect(this, ref node);
 
-    if (!_actualViewport.IsEmpty)
-    {
-      AddNewIntersectingViewportItems(_actualViewport, node.OwnIndex);
-    }
-
     // Note: Classical RTree implementations would now check if the node is overfull, split it if necessary and
     // start to rebalance the tree. This is not necessary in this implementation, as unlike a classical RTree,
     // it can work with leaf nodes on multiple depth layers and inserts parent layers on demand.
@@ -595,12 +676,6 @@ public class RTree<T>
 
     if (toRemove.IsLeaf)
     {
-      if (toRemove.IsVisibleInViewport)
-      {
-        var actuallyRemoved = _viewportItems.Remove(toRemove.Data);
-        Debug.Assert(actuallyRemoved);
-      }
-
       parentIndex = MoveChildrenToParentIfCapacityAvailable(parentIndex);
       RemoveUnderfullFromAncestorNodes(parentIndex);
 
@@ -873,13 +948,13 @@ public class RTree<T>
     ArrayPool<float>.Shared.Return(keys);
   }
 
-  private void UpdateViewportItems(RTreeBoundary oldViewport, RTreeBoundary newViewport)
+  private void UpdateViewportItems(in RTreeBoundary oldViewport, in RTreeBoundary newViewport)
   {
     if (newViewport.IsEmpty)
     {
       if (!oldViewport.IsEmpty)
       {
-        ResetViewportItems();
+        _viewportItems.Clear();
       }
 
       return;
@@ -888,226 +963,42 @@ public class RTree<T>
     if (oldViewport.IsEmpty)
     {
       // Hot path if previously no viewport was set, just add all items intersecting the viewport.
-      AddNewIntersectingViewportItems(newViewport);
+      // Not directly querying to _viewPortItems to avoid unnecessary locks/collection changed events.
+      Debug.Assert(_viewportUpdateCache.Count == 0);
+      QueryTo(in newViewport, _viewportUpdateCache);
+      _viewportItems.AddRange(_viewportUpdateCache);
+      _viewportUpdateCache.Clear();
       return;
     }
 
-    if (oldViewport.Contains(newViewport))
+    if (!oldViewport.IntersectsUnchecked(in newViewport))
+    {
+      _viewportItems.Clear();
+
+      // Not directly querying to _viewPortItems to avoid unnecessary locks/collection changed events.
+      Debug.Assert(_viewportUpdateCache.Count == 0);
+      QueryTo(in newViewport, _viewportUpdateCache);
+      _viewportItems.AddRange(_viewportUpdateCache);
+      _viewportUpdateCache.Clear();
+      return;
+    }
+
+    if (oldViewport.ContainsUnchecked(in newViewport))
     {
       // Hot path for zooming in/out and panning.
-      // No need to check for new items, but remove no longer contained viewport items.
-      Span<RTreeBoundary> removeRegions = stackalloc RTreeBoundary[4];
-      var removeRegionCount = ComputeCutoffRegions(oldViewport, newViewport, removeRegions);
-
-      for (var index = 0; index < removeRegionCount; index++)
-      {
-        RemoveNoLongerIntersectingViewportItems(removeRegions[index], newViewport);
-      }
-
+      Debug.Assert(_viewportUpdateCache.Count == 0);
+      QueryTo(in newViewport, _viewportUpdateCache);
+      _viewportItems.IntersectWith(_viewportUpdateCache);
+      _viewportUpdateCache.Clear();
       return;
     }
 
-    if (!oldViewport.Intersects(newViewport))
-    {
-      ResetViewportItems();
-      AddNewIntersectingViewportItems(newViewport);
-      return;
-    }
+    // At this point we deal with partially overlapping data.
+    Debug.Assert(_viewportUpdateCache.Count == 0);
 
-    // At this point, we have a partial overlap: update only the cutoffs between the old and new viewport.
-    Span<RTreeBoundary> regions = stackalloc RTreeBoundary[4];
-
-    var regionCount = ComputeCutoffRegions(oldViewport, newViewport, regions);
-    for (var index = 0; index < regionCount; index++)
-    {
-      RemoveNoLongerIntersectingViewportItems(regions[index], newViewport);
-    }
-
-    regionCount = ComputeCutoffRegions(newViewport, oldViewport, regions);
-    for (var index = 0; index < regionCount; index++)
-    {
-      AddNewIntersectingViewportItems(regions[index]);
-    }
-  }
-
-  private void ResetViewportItems()
-  {
-    Debug.Assert(_queryStack.Count == 0);
-    _queryStack.Push(RootIndex);
-
-    var markedForRemoval = 0;
-
-    while (_queryStack.Count > 0)
-    {
-      var currentIndex = _queryStack.Pop();
-      ref var current = ref Nodes[currentIndex];
-
-      if (current.IsLeaf)
-      {
-        if (current.IsVisibleInViewport)
-        {
-          markedForRemoval++;
-        }
-
-        current.SetLeafVisibleInViewport(this, false);
-        continue;
-      }
-
-      if (current.ChildrenVisibleInViewport <= 0)
-      {
-        // No children have been in the viewport yet, hence no need to iterate them again.
-        continue;
-      }
-
-      var childrenCount = current.ChildrenCount;
-      var childReferenceOffset = current.FirstChildReferenceIndex;
-
-      for (var index = 0; index < childrenCount; index++)
-      {
-        var childReferenceIndex = childReferenceOffset + index;
-        var childIndex = ChildReferences[childReferenceIndex].NodeIndex;
-        _queryStack.Push(childIndex);
-      }
-    }
-
-    Debug.Assert(_viewportItems.Count == markedForRemoval);
-    _viewportItems.Clear();
-  }
-
-  private void RemoveNoLongerIntersectingViewportItems(RTreeBoundary cutoffRegion, RTreeBoundary viewport)
-  {
-    Debug.Assert(
-      !viewport.IsEmpty,
-      $"Should not be called if the new viewport is empty, instead {nameof(ResetViewportItems)} " +
-      $"should have been called directly.");
-    Debug.Assert(!cutoffRegion.IsEmpty);
-
-    if (_viewport.IsEmpty)
-    {
-      Debug.Assert(_viewportItems.Count == 0);
-      return;
-    }
-
-    if (_viewportItems.Count == 0)
-    {
-      return;
-    }
-
-    Debug.Assert(_queryStack.Count == 0);
-    _queryStack.Push(RootIndex);
-
-    while (_queryStack.Count > 0)
-    {
-      var currentIndex = _queryStack.Pop();
-      ref var current = ref Nodes[currentIndex];
-
-      if (current.IsLeaf)
-      {
-        if (!current.IsVisibleInViewport)
-        {
-          // Not in viewport, nothing to remove.
-          Debug.Assert(!_viewportItems.Contains(current.Data));
-          continue;
-        }
-
-        if (!current.Boundary.Intersects(cutoffRegion) || current.Boundary.Intersects(viewport))
-        {
-          // Not in cutoff region, or partially still visible in viewport.
-          continue;
-        }
-
-        current.SetLeafVisibleInViewport(this, false);
-        var actuallyRemoved = _viewportItems.Remove(current.Data);
-
-        Debug.Assert(actuallyRemoved);
-        continue;
-      }
-
-      if (current.ChildrenVisibleInViewport <= 0)
-      {
-        // No need to iterate children if none of them are in the viewport.
-        continue;
-      }
-
-      if (!cutoffRegion.Intersects(current.Boundary))
-      {
-        continue;
-      }
-
-      var childReferenceOffset = current.FirstChildReferenceIndex;
-      for (var index = 0; index < current.ChildrenCount; index++)
-      {
-        var childReferenceIndex = childReferenceOffset + index;
-        var childIndex = ChildReferences[childReferenceIndex].NodeIndex;
-        _queryStack.Push(childIndex);
-      }
-    }
-  }
-
-  private void AddNewIntersectingViewportItems(RTreeBoundary viewport, int startAtNode = RTreeNode<T>.NullIndex)
-  {
-    Debug.Assert(
-      !viewport.IsEmpty,
-      $"Should not be called if the new viewport is empty, instead {nameof(ResetViewportItems)} " +
-      $"should have been called directly.");
-
-    Debug.Assert(_queryStack.Count == 0);
-    _queryStack.Push(startAtNode >= 0 ? startAtNode : RootIndex);
-
-    while (_queryStack.Count > 0)
-    {
-      var currentIndex = _queryStack.Pop();
-      ref var current = ref Nodes[currentIndex];
-
-      if (current.IsLeaf)
-      {
-        var wasInViewport = current.IsVisibleInViewport;
-        if (wasInViewport)
-        {
-          // Already part of the viewport.
-          Debug.Assert(_viewportItems.Contains(current.Data));
-          continue;
-        }
-
-        if (!current.Boundary.Intersects(viewport))
-        {
-          // Note that the item could still exist in the _viewportItems, which is valid,
-          // e.g. due to viewport caching (see usage of _actualViewport/_viewport).
-          continue;
-        }
-
-        current.SetLeafVisibleInViewport(this, true);
-
-        var actuallyAdded = _viewportItems.Add(current.Data);
-        Debug.Assert(wasInViewport != actuallyAdded);
-
-        continue;
-      }
-
-      // This is a non-leaf node.
-      if (current.IsFullyVisibleInViewport)
-      {
-        // All children of this node are already within the viewport.
-        continue;
-      }
-
-      if (!viewport.Intersects(current.Boundary))
-      {
-        // Note that the item could still exist in the _viewportItems, which is valid,
-        // e.g. due to viewport caching (see usage of _actualViewport/_viewport).
-        continue;
-      }
-
-      // Iterate backwards when pushing to the stack, since this will result in the same order in _viewportItems as in
-      // the current node's children. Just easier to view and compare in the debugger this way.
-      var childReferenceOffset = current.FirstChildReferenceIndex;
-      for (var index = current.ChildrenCount - 1; index >= 0; index--)
-      {
-        var childReferenceIndex = childReferenceOffset + index;
-        var childIndex = ChildReferences[childReferenceIndex].NodeIndex;
-        _queryStack.Push(childIndex);
-      }
-    }
+    QueryTo(in newViewport, _viewportUpdateCache);
+    _viewportItems.IntersectThenUnionWith(_viewportUpdateCache);
+    _viewportUpdateCache.Clear();
   }
 
   private int MoveChildrenToParentIfCapacityAvailable(int nodeIndex)
@@ -1198,56 +1089,5 @@ public class RTree<T>
     var blockIndex = firstChildIndex / MaxEntriesPerNode;
     ChildReferences[firstChildIndex].NodeIndex = _freeChildBlockHead;
     _freeChildBlockHead = blockIndex;
-  }
-
-  private static int ComputeCutoffRegions(RTreeBoundary first, RTreeBoundary second, Span<RTreeBoundary> cutoffs)
-  {
-    if (first.IsEmpty)
-    {
-      return 0; // No cutoffs, as nothing to remove from or add to.
-    }
-
-    if (second.IsEmpty)
-    {
-      cutoffs[0] = first; // Full boundary.
-      return 1;
-    }
-
-    var count = 0;
-    var horizontalX = Math.Max(second.X, first.X);
-    var horizontalRight = Math.Min(second.Right, first.Right);
-    var horizontalWidth = horizontalRight - horizontalX;
-
-    var leftWidth = second.X - first.X;
-    if (leftWidth > 0)
-    {
-      // Full left segment of "first" not covered by "second".
-      cutoffs[count++] = new RTreeBoundary(first.X, first.Y, leftWidth, first.Height);
-    }
-
-    var topHeight = second.Y - first.Y;
-    if (topHeight > 0 && horizontalWidth > 0)
-    {
-      // When the boundaries differ in 2 dimensions, always gets the top segment of "first" not covered by "second",
-      // but without the area of the left/right segments.
-      cutoffs[count++] = new RTreeBoundary(horizontalX, first.Y, horizontalWidth, topHeight);
-    }
-
-    var rightWidth = first.Right - second.Right;
-    if (rightWidth > 0)
-    {
-      // Full right segment of "first" not covered by "second".
-      cutoffs[count++] = new RTreeBoundary(second.Right, first.Y, rightWidth, first.Height);
-    }
-
-    var bottomHeight = first.Bottom - second.Bottom;
-    if (bottomHeight > 0 && horizontalWidth > 0)
-    {
-      // When the boundaries differ in 2 dimensions, always gets the top segment of "first" not covered by "second",
-      // but without the area of the left/right segments.
-      cutoffs[count++] = new RTreeBoundary(horizontalX, second.Bottom, horizontalWidth, bottomHeight);
-    }
-
-    return count;
   }
 }

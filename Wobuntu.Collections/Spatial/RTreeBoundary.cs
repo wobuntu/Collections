@@ -39,9 +39,13 @@ public readonly struct RTreeBoundary
   public float Width => Right - X;
   public float Height => Bottom - Y;
 
-  public bool IsEmpty => X >= Right || Y >= Bottom;
+  public bool IsEmpty
+  {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    get => X >= Right || Y >= Bottom;
+  }
 
-  public bool Intersects(RTreeBoundary other) =>
+  public bool Intersects(in RTreeBoundary other) =>
     !IsEmpty
     && !other.IsEmpty
     && X <= other.Right
@@ -49,7 +53,7 @@ public readonly struct RTreeBoundary
     && Y <= other.Bottom
     && Bottom >= other.Y;
 
-  public bool Contains(RTreeBoundary other) =>
+  public bool Contains(in RTreeBoundary other) =>
     !IsEmpty
     && !other.IsEmpty
     && X <= other.X
@@ -60,19 +64,21 @@ public readonly struct RTreeBoundary
   public bool Contains(float x, float y) =>
     !IsEmpty && x >= X && x <= Right && y >= Y && y <= Bottom;
 
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
   internal bool IntersectsUnchecked(in RTreeBoundary other) =>
     X <= other.Right
     && Right >= other.X
     && Y <= other.Bottom
     && Bottom >= other.Y;
 
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
   internal bool ContainsUnchecked(in RTreeBoundary other) =>
     X <= other.X
     && Right >= other.Right
     && Y <= other.Y
     && Bottom >= other.Bottom;
 
-  public RTreeBoundary Union(RTreeBoundary other)
+  public RTreeBoundary Union(in RTreeBoundary other)
   {
     if (IsEmpty)
     {
@@ -94,8 +100,17 @@ public readonly struct RTreeBoundary
 
   public override bool Equals(object? obj) =>
     obj is RTreeBoundary rectangle
-    && Equals(rectangle);
+    && Equals(in rectangle);
 
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
+  public bool Equals(in RTreeBoundary other) =>
+    // ReSharper disable CompareOfFloatsByEqualityOperator : We do it here like .NET does it
+    X == other.X
+    && Y == other.Y
+    && Right == other.Right
+    && Bottom == other.Bottom;
+
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
   public bool Equals(RTreeBoundary other) =>
     // ReSharper disable CompareOfFloatsByEqualityOperator : We do it here like .NET does it
     X == other.X
@@ -111,9 +126,11 @@ public readonly struct RTreeBoundary
 
   public string ToString(string? format, IFormatProvider? provider) => ConvertToString(format, provider);
 
-  public static bool operator ==(RTreeBoundary left, RTreeBoundary right) => left.Equals(right);
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
+  public static bool operator ==(in RTreeBoundary left, in RTreeBoundary right) => left.Equals(in right);
 
-  public static bool operator !=(RTreeBoundary left, RTreeBoundary right) => !left.Equals(right);
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
+  public static bool operator !=(in RTreeBoundary left, in RTreeBoundary right) => !left.Equals(in right);
 
   private string ConvertToString(string? format, IFormatProvider? provider)
   {
