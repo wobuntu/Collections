@@ -98,6 +98,39 @@ public readonly struct RTreeBoundary
     return new RTreeBoundary(left, top, right - left, bottom - top);
   }
 
+  public RTreeBoundary Intersect(in RTreeBoundary other)
+  {
+    if (IsEmpty)
+    {
+      return this;
+    }
+
+    if (other.IsEmpty)
+    {
+      return other;
+    }
+
+    var left = Math.Max(X, other.X);
+    var right = Math.Min(Right, other.Right);
+    
+    var width = right - left;
+    if (width <= 0)
+    {
+      return new RTreeBoundary();
+    }
+    
+    var top = Math.Max(Y, other.Y);
+    var bottom = Math.Min(Bottom, other.Bottom);
+
+    var height = bottom - top;
+    if (height <= 0)
+    {
+      return new RTreeBoundary();
+    }
+
+    return new RTreeBoundary(left, top, width, height);
+  }
+
   public override bool Equals(object? obj) =>
     obj is RTreeBoundary rectangle
     && Equals(in rectangle);

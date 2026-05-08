@@ -237,7 +237,8 @@ public class RTree<T>
     if (!addedBoundary.IsEmpty)
     {
       Debug.Assert(_viewportUpdateCache.Count == 0);
-      QueryTo(in _actualViewport, _viewportUpdateCache);
+      addedBoundary = _actualViewport.Intersect(in addedBoundary);
+      QueryTo(in addedBoundary, _viewportUpdateCache);
       _viewportItems.AddRange(_viewportUpdateCache);
       _viewportUpdateCache.Clear();
     }
@@ -265,11 +266,6 @@ public class RTree<T>
       return true;
     }
 
-    if (!RemoveNode(nodeIndex))
-    {
-      return false;
-    }
-
     if (!_actualViewport.IsEmpty)
     {
       ref readonly var node = ref Nodes[nodeIndex];
@@ -278,6 +274,11 @@ public class RTree<T>
         var actuallyRemoved = _viewportItems.Remove(item);
         Debug.Assert(actuallyRemoved || node.Boundary.IsEmpty);
       }
+    }
+
+    if (!RemoveNode(nodeIndex))
+    {
+      return false;
     }
 
     _itemToNodeIndex.Remove(item);
