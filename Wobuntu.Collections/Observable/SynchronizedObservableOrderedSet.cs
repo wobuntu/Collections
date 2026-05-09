@@ -1114,7 +1114,7 @@ public class SynchronizedObservableOrderedSet<T>
 
   public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
-  protected readonly struct ReadLockScope : IDisposable
+  private readonly ref struct ReadLockScope : IDisposable
   {
     private readonly ReaderWriterLockSlim? _lock;
 
@@ -1132,7 +1132,7 @@ public class SynchronizedObservableOrderedSet<T>
     public void Dispose() => _lock?.ExitReadLock();
   }
 
-  protected readonly struct WriteLockScope : IDisposable
+  private readonly ref struct WriteLockScope : IDisposable
   {
     private readonly ReaderWriterLockSlim _lock;
 
@@ -1145,7 +1145,7 @@ public class SynchronizedObservableOrderedSet<T>
     public void Dispose() => _lock.ExitWriteLock();
   }
 
-  private readonly struct WriteReadLockScope : IDisposable
+  private readonly ref struct WriteReadLockScope : IDisposable
   {
     private readonly ReaderWriterLockSlim _writeLock;
     private readonly ReaderWriterLockSlim _readLock;
