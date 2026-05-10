@@ -80,13 +80,13 @@ public class RTree<T>
   public RTree(int capacity, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
     : this(capacity, options ?? new RTreeOptions(), boundarySelector) { }
 
-  public RTree(Span<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
+  public RTree(ReadOnlySpan<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
     : this(items.Length, options ?? new RTreeOptions(), boundarySelector)
   {
     BulkInitialize(items, items.Length);
   }
 
-  public RTree(int capacity, Span<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
+  public RTree(int capacity, ReadOnlySpan<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
     : this(Math.Max(capacity, items.Length), options ?? new RTreeOptions(), boundarySelector)
   {
     BulkInitialize(items, items.Length);
@@ -233,7 +233,7 @@ public class RTree<T>
     return true;
   }
 
-  public int AddRange(Span<T> items)
+  public int AddRange(ReadOnlySpan<T> items)
   {
     if (items.Length == 0)
     {
@@ -847,7 +847,7 @@ public class RTree<T>
     }
   }
 
-  private unsafe int BulkInitialize(Span<T> items, int capacity)
+  private unsafe int BulkInitialize(ReadOnlySpan<T> items, int capacity)
   {
     if (items.Length == 0)
     {

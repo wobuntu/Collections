@@ -117,7 +117,7 @@ internal struct RTreeNode<T>
     Debug.Assert(!IsOverFull(owner.MaxEntriesPerNode), "Must not create overfull nodes.");
   }
 
-  internal void AddChildrenDirect(RTree<T> owner, Span<int> childIndices)
+  internal void AddChildrenDirect(RTree<T> owner, ReadOnlySpan<int> childIndices)
   {
     Debug.Assert(!IsLeaf, "Must not be called on leaf nodes.");
 
