@@ -41,6 +41,9 @@ public class RTree<T>
   : ICollection<T>
   where T : notnull
 {
+  private const int StackAllocLimit = 512;
+
+  private readonly Dictionary<T, int> _itemToNodeIndex;
   private readonly Stack<int> _queryStack;
 
   private readonly Func<T, RTreeBoundary> _boundarySelector;
@@ -51,7 +54,6 @@ public class RTree<T>
   private readonly SynchronizedObservableOrderedSet<T> _viewportItems;
   private readonly HashSet<T> _viewportUpdateCache;
 
-  private Dictionary<T, int> _itemToNodeIndex;
   private int _nodeCount;
 
   private int _childReferencesCount;
@@ -955,30 +957,47 @@ public class RTree<T>
     }
   }
 
-  private void SortIndicesByCenter(Span<int> indices, bool byX)
+  private unsafe void SortIndicesByCenter(Span<int> indices, bool byX)
   {
     // Use a keys array for Span.Sort(keys, items) — sort keys, items follow along
-    var keys = ArrayPool<float>.Shared.Rent(indices.Length);
-    var keysSpan = keys.AsSpan(0, indices.Length);
+    float[]? rented = null;
+    Span<float> keys;
+
+    if (indices.Length > StackAllocLimit)
+    {
+      rented = ArrayPool<float>.Shared.Rent(indices.Length);
+      keys = rented.AsSpan(0, indices.Length);
+    }
+    else
+    {
+#pragma warning disable CS9081
+      // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
+      // The stack allocated span is used for sorting only (Stack only grows on calling sort, stack frame is not dropped).
+      keys = stackalloc float[indices.Length];
+#pragma warning restore CS9081
+    }
 
     if (byX)
     {
       for (var index = 0; index < indices.Length; index++)
       {
-        keysSpan[index] = Nodes[indices[index]].Boundary.CenterX;
+        keys[index] = Nodes[indices[index]].Boundary.CenterX;
       }
     }
     else
     {
       for (var index = 0; index < indices.Length; index++)
       {
-        keysSpan[index] = Nodes[indices[index]].Boundary.CenterY;
+        keys[index] = Nodes[indices[index]].Boundary.CenterY;
       }
     }
 
-    keysSpan.Sort(indices);
+    keys.Sort(indices);
 
-    ArrayPool<float>.Shared.Return(keys);
+    if (rented != null)
+    {
+      ArrayPool<float>.Shared.Return(rented);
+    }
   }
 
   private void UpdateViewportItems(in RTreeBoundary oldViewport, in RTreeBoundary newViewport)
