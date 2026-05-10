@@ -41,7 +41,12 @@ public class RTree<T>
   : ICollection<T>
   where T : notnull
 {
-  private const int StackAllocLimit = 512;
+  // ReSharper disable once CommentTypo
+  // We use stackalloc for int / float arrays, hence the division by 4. The stack buffer should usually
+  // be 1MB on windows (https://learn.microsoft.com/en-us/windows/win32/procthread/thread-stack-size),
+  // 8MB on linux ("ulimit -s"), less on WASM. Seems like dotnet uses similar sizes in the BCL, hence
+  // trying to be conservative here and assuming 512 bytes to be OK.
+  private const int StackAllocLimit = 512 / 4;
 
   private readonly Dictionary<T, int> _itemToNodeIndex;
   private readonly Stack<int> _queryStack;
@@ -861,7 +866,7 @@ public class RTree<T>
     {
 #pragma warning disable CS9081
       // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
-      // The stack allocated span is used for sorting only (Stack only grows on calling sort, stack frame is not dropped).
+      // The stack allocated span is used for sorting only (Stack only grows, stack frame is not dropped, nothing persisted).
       indices = stackalloc int[items.Length];
 #pragma warning restore CS9081
     }
@@ -990,7 +995,7 @@ public class RTree<T>
     {
 #pragma warning disable CS9081
       // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
-      // The stack allocated span is used for sorting only (Stack only grows on calling sort, stack frame is not dropped).
+      // The stack allocated span is used for sorting only (Stack only grows, stack frame is not dropped, nothing persisted).
       keys = stackalloc float[indices.Length];
 #pragma warning restore CS9081
     }
@@ -1071,7 +1076,7 @@ public class RTree<T>
     _viewportUpdateCache.Clear();
   }
 
-  private int MoveChildrenToParentIfCapacityAvailable(int nodeIndex)
+  private unsafe int MoveChildrenToParentIfCapacityAvailable(int nodeIndex)
   {
     ref var node = ref Nodes[nodeIndex];
     Debug.Assert(!node.IsLeaf, "Must not be called on leaf nodes.");
@@ -1091,7 +1096,23 @@ public class RTree<T>
     // Collect children before removing node from parent (which invalidates slots)
     var childReferenceIndex = node.FirstChildReferenceIndex;
     var childCount = node.ChildrenCount;
-    var childIndices = ArrayPool<int>.Shared.Rent(childCount);
+
+    int[]? rented = null;
+    Span<int> childIndices;
+
+    if (childCount > StackAllocLimit)
+    {
+      rented = ArrayPool<int>.Shared.Rent(childCount);
+      childIndices = rented.AsSpan(0, childCount);
+    }
+    else
+    {
+#pragma warning disable CS9081
+      // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
+      // The stack allocated span is used for intermediate save of indices, does not leave the stack.
+      childIndices = stackalloc int[childCount];
+#pragma warning restore CS9081
+    }
 
     for (var index = 0; index < childCount; index++)
     {
@@ -1109,7 +1130,10 @@ public class RTree<T>
       parent.AddChildDirect(this, ref child);
     }
 
-    ArrayPool<int>.Shared.Return(childIndices, true);
+    if (rented != null)
+    {
+      ArrayPool<int>.Shared.Return(rented, true);
+    }
 
     Nodes[nodeIndex].ChildrenCount = 0; // Reset before freeing to avoid double-detach
     RTreeNode<T>.Free(this, ref node);
