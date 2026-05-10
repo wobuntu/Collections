@@ -578,7 +578,9 @@ public class RTreeTests
   {
     // Arrange
     var options = new RTreeOptions { MaxEntriesPerNode = 2 };
+#pragma warning disable IDE0028
     var tree = new RTree<int>(value => new RTreeBoundary(value * 10, 10, 10, 10), options) { 1, 5 };
+#pragma warning restore IDE0028
 
     // Act: Adding items triggers parent layer insertions
     tree.Add(2);
@@ -762,7 +764,9 @@ public class RTreeTests
   public void Viewport_SetBeforeItemsAdded_ViewportItemsEmpty()
   {
     // Arrange
+#pragma warning disable IDE0017
     var tree = new RTree<int>(x => new RTreeBoundary(x * 10, 0, 5, 5));
+#pragma warning restore IDE0017
 
     // Act
     tree.Viewport = new RTreeBoundary(0, -5, 200, 15);
@@ -1360,7 +1364,9 @@ public class RTreeTests
   public void RemoveRange_WithNullElements_NullsSkippedAndCountUnchanged()
   {
     // Arrange
+#pragma warning disable IDE0028
     var tree = new RTree<string>(x => new RTreeBoundary(x.Length, 0, 1, 1));
+#pragma warning restore IDE0028
     tree.Add("a");
     tree.Add("b");
     var countBefore = tree.Count;
@@ -1455,11 +1461,9 @@ public class RTreeTests
     // Arrange: minimal initial capacities force array resizes on nearly every allocation
     var options = new RTreeOptions
     {
-      MaxEntriesPerNode = maxEntries,
-      InitialNodeCapacity = 2,
-      InitialChildBlockCapacity = 1,
+      MaxEntriesPerNode = maxEntries
     };
-    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, x * 5, 8, 8), options);
+    var tree = new RTree<int>(0, x => new RTreeBoundary(x * 10, x * 5, 8, 8), options);
 
     // Act
     for (var index = 0; index < 200; index++)
@@ -1488,12 +1492,10 @@ public class RTreeTests
     // Arrange
     var options = new RTreeOptions
     {
-      MaxEntriesPerNode = maxEntries,
-      InitialNodeCapacity = 2,
-      InitialChildBlockCapacity = 1,
+      MaxEntriesPerNode = maxEntries
     };
     var items = Enumerable.Range(0, 200).ToArray();
-    var tree = new RTree<int>(items, x => new RTreeBoundary(x * 10, x * 5, 8, 8), options);
+    var tree = new RTree<int>(0, items, x => new RTreeBoundary(x * 10, x * 5, 8, 8), options);
 
     // Assert
     Assert.Equal(200, tree.Count);
@@ -1512,11 +1514,9 @@ public class RTreeTests
     // Arrange
     var options = new RTreeOptions
     {
-      MaxEntriesPerNode = maxEntries,
-      InitialNodeCapacity = 2,
-      InitialChildBlockCapacity = 1,
+      MaxEntriesPerNode = maxEntries
     };
-    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, x * 5, 8, 8), options);
+    var tree = new RTree<int>(0, x => new RTreeBoundary(x * 10, x * 5, 8, 8), options);
 
     for (var index = 0; index < 100; index++)
     {
@@ -1550,11 +1550,9 @@ public class RTreeTests
     // Arrange
     var options = new RTreeOptions
     {
-      MaxEntriesPerNode = maxEntries,
-      InitialNodeCapacity = 2,
-      InitialChildBlockCapacity = 1,
+      MaxEntriesPerNode = maxEntries
     };
-    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, x * 5, 8, 8), options);
+    var tree = new RTree<int>(0, x => new RTreeBoundary(x * 10, x * 5, 8, 8), options);
 
     // Act: add, remove, re-add to exercise free-list recycling with minimal arena sizes
     for (var index = 0; index < 50; index++)
@@ -1590,12 +1588,10 @@ public class RTreeTests
     var options = new RTreeOptions
     {
       MaxEntriesPerNode = maxEntries,
-      InitialNodeCapacity = 2,
-      InitialChildBlockCapacity = 1,
       InitialQueryStackCapacity = 1,
       InitialViewportItemsCapacity = 1,
     };
-    var tree = new RTree<int>(x => new RTreeBoundary(x * 10, 0, 8, 8), options);
+    var tree = new RTree<int>(0, x => new RTreeBoundary(x * 10, 0, 8, 8), options);
 
     for (var index = 0; index < 100; index++)
     {
@@ -1622,6 +1618,7 @@ public class RTreeTests
   public void CopyTo_CopiesAllItemsIntoArray()
   {
     // Arrange
+    // ReSharper disable once CollectionNeverUpdated.Local
     var tree = new RTree<int>([1, 2, 3], x => new RTreeBoundary(x, 0, 1, 1));
     var array = new int[3];
 
@@ -1636,6 +1633,7 @@ public class RTreeTests
   public void CopyTo_WithOffset_PlacesItemsAtCorrectPosition()
   {
     // Arrange
+    // ReSharper disable once CollectionNeverUpdated.Local
     var tree = new RTree<int>([1, 2, 3], x => new RTreeBoundary(x, 0, 1, 1));
     var array = new int[5];
 
@@ -1652,6 +1650,7 @@ public class RTreeTests
   public void CopyTo_ArrayTooSmall_ThrowsArgumentException()
   {
     // Arrange
+    // ReSharper disable once CollectionNeverUpdated.Local
     var tree = new RTree<int>([1, 2, 3], x => new RTreeBoundary(x, 0, 1, 1));
 
     // Act / Assert
@@ -1663,6 +1662,7 @@ public class RTreeTests
   public void CopyTo_NegativeArrayIndex_ThrowsArgumentOutOfRangeException()
   {
     // Arrange
+    // ReSharper disable once CollectionNeverUpdated.Local
     var tree = new RTree<int>([1, 2, 3], x => new RTreeBoundary(x, 0, 1, 1));
 
     // Act / Assert

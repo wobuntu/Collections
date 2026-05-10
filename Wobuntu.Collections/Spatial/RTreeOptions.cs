@@ -2,8 +2,6 @@
 
 namespace Wobuntu.Collections.Spatial;
 
-// TODO: Allow setting initial capacity instead of Node/Childblock capacities, basically derive them from this number.
-// Same for QueryStack capacity
 public class RTreeOptions
 {
   private const string MaxEntriesPerNodeMustBeAtLeast2 = "A maximum entry capacity of at least 2 is required.";
@@ -12,8 +10,6 @@ public class RTreeOptions
 
   public const byte DefaultMaxEntriesPerNode = 12;
   public const byte MinEntriesPerNodeMinimum = 2;
-  public const int DefaultInitialNodeCapacity = 256;
-  public const int DefaultInitialChildBlockCapacity = 64;
   public const int DefaultInitialQueryStackCapacity = 64;
   public const int DefaultInitialViewportItemsCapacity = 64;
 
@@ -55,38 +51,6 @@ public class RTreeOptions
       field = value;
     }
   } = .3;
-
-  /// <summary>
-  ///   Gets or sets the initial capacity of nodes, which must be at least <c>1</c>.<br />
-  ///   Set to a higher number than the default <see cref="DefaultInitialNodeCapacity"/> to avoid unnecessary reallocation.
-  /// </summary>
-  public int InitialNodeCapacity
-  {
-    get;
-    init
-    {
-      if (value < 1)
-      {
-        throw new ArgumentOutOfRangeException(nameof(value), value, InitialCapacityMustBeBigger0);
-      }
-
-      field = value;
-    }
-  } = DefaultInitialNodeCapacity;
-
-  public int InitialChildBlockCapacity
-  {
-    get;
-    init
-    {
-      if (value < 1)
-      {
-        throw new ArgumentOutOfRangeException(nameof(value), value, InitialCapacityMustBeBigger0);
-      }
-
-      field = value;
-    }
-  } = DefaultInitialChildBlockCapacity;
 
   public int InitialQueryStackCapacity
   {

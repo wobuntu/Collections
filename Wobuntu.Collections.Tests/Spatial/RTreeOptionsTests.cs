@@ -26,36 +26,6 @@ public class RTreeOptionsTests
   }
 
   [Fact]
-  public void Init_InitialNodeCapacitySmaller1_Throws()
-  {
-    Assert.Throws<ArgumentOutOfRangeException>(() => new RTreeOptions { InitialNodeCapacity = 0 });
-
-    // Must not throw:
-    _ = new RTreeOptions { InitialNodeCapacity = 1 };
-    _ = new RTreeOptions { InitialNodeCapacity = int.MaxValue };
-  }
-
-  [Fact]
-  public void Init_InitialChildBlockCapacitySmaller1_Throws()
-  {
-    Assert.Throws<ArgumentOutOfRangeException>(() => new RTreeOptions { InitialChildBlockCapacity = 0 });
-
-    // Must not throw:
-    _ = new RTreeOptions { InitialChildBlockCapacity = 1 };
-    _ = new RTreeOptions { InitialChildBlockCapacity = int.MaxValue };
-  }
-
-  [Fact]
-  public void Init_InitialQueryStackCapacitySmaller1_Throws()
-  {
-    Assert.Throws<ArgumentOutOfRangeException>(() => new RTreeOptions { InitialChildBlockCapacity = 0 });
-
-    // Must not throw:
-    _ = new RTreeOptions { InitialChildBlockCapacity = 1 };
-    _ = new RTreeOptions { InitialChildBlockCapacity = int.MaxValue };
-  }
-
-  [Fact]
   public void Init_InitialViewportItemsCapacitySmaller1_Throws()
   {
     Assert.Throws<ArgumentOutOfRangeException>(() => new RTreeOptions { InitialQueryStackCapacity = 0 });

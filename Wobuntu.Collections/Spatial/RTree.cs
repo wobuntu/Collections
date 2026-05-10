@@ -67,16 +67,26 @@ public class RTree<T>
   internal RTreeNodeReference[] ChildReferences;
 
   public RTree(Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
-    : this(options ?? new RTreeOptions(), boundarySelector) { }
+    : this(0, options ?? new RTreeOptions(), boundarySelector) { }
+
+  public RTree(int capacity, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
+    : this(capacity, options ?? new RTreeOptions(), boundarySelector) { }
 
   public RTree(Span<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
-    : this(options ?? new RTreeOptions(), boundarySelector)
+    : this(items.Length, options ?? new RTreeOptions(), boundarySelector)
   {
     BulkInitialize(items);
   }
 
-  private RTree(RTreeOptions options, Func<T, RTreeBoundary> boundarySelector)
+  public RTree(int capacity, Span<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
+    : this(Math.Max(capacity, items.Length), options ?? new RTreeOptions(), boundarySelector)
   {
+    BulkInitialize(items);
+  }
+
+  private RTree(int capacity, RTreeOptions options, Func<T, RTreeBoundary> boundarySelector)
+  {
+    ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 0);
     ArgumentNullException.ThrowIfNull(boundarySelector);
 
     _boundarySelector = boundarySelector;
@@ -90,13 +100,20 @@ public class RTree<T>
     // would cause massive overlaps of RTreeNodes.
     _leafNodeVirtualFullness = (MaxEntriesPerNode - MinEntriesPerNode) / (double)MaxEntriesPerNode;
 
-    _itemToNodeIndex = new Dictionary<T, int>(options.InitialNodeCapacity);
+    _itemToNodeIndex = new Dictionary<T, int>(capacity);
     _queryStack = new Stack<int>(options.InitialQueryStackCapacity);
     _viewportItems = new SynchronizedObservableOrderedSet<T>(options.InitialViewportItemsCapacity);
     _viewportUpdateCache = new HashSet<T>(options.InitialViewportItemsCapacity);
 
-    Nodes = new RTreeNode<T>[options.InitialNodeCapacity];
-    ChildReferences = new RTreeNodeReference[options.InitialChildBlockCapacity * MaxEntriesPerNode];
+    if (capacity == 0)
+    {
+      // We need 1 node to be allocated anyway to store the root node, so use fit some anyway.
+      capacity = 16;
+    }
+
+    var (nodeCount, childBlockCount) = EstimateCapacities(capacity, options);
+    Nodes = new RTreeNode<T>[nodeCount];
+    ChildReferences = new RTreeNodeReference[childBlockCount * MaxEntriesPerNode];
 
     RootIndex = RTreeNode<T>.AllocateNonLeaf(this).OwnIndex;
   }
@@ -1090,5 +1107,34 @@ public class RTree<T>
     var blockIndex = firstChildIndex / MaxEntriesPerNode;
     ChildReferences[firstChildIndex].NodeIndex = _freeChildBlockHead;
     _freeChildBlockHead = blockIndex;
+  }
+
+  private static (int Nodes, int ChildBlocks) EstimateCapacities(int leafCapacity, RTreeOptions options)
+  {
+    // Overshoot the specified target by about 25%, as the calculation below assumes a perfect distribution.
+    const int overshoot = 25;
+    // Every value above the following would overflow in the calculation below.
+    const int upperLimit = (int)(int.MaxValue / (1 + overshoot / 100d));
+    // Every value below the following can be safely multiplied by (100 + overshoot).
+    // Every value above must first be divided by 100, then multiplied by (100 + overshoot).
+    // Why: e.g. 10 * 125 / 100 = 12, but 10 / 100 * 125 = 0 -> Fraction loss of small numbers has high impact,
+    // while it does not matter so much for large ones.
+    const int saveMultiplyLimit = int.MaxValue / 125;
+
+    if (leafCapacity > upperLimit)
+    {
+      leafCapacity = int.MaxValue;
+    }
+    else if (leafCapacity > saveMultiplyLimit)
+    {
+      leafCapacity = leafCapacity / 100 * (100 + overshoot);
+    }
+    else
+    {
+      leafCapacity = leafCapacity * (100 + overshoot) / 100;
+    }
+
+    var estimatedChildBlockCount = leafCapacity / Math.Max(options.MaxEntriesPerNode - 1, 1) + 1;
+    return (leafCapacity + estimatedChildBlockCount, estimatedChildBlockCount);
   }
 }
