@@ -4,6 +4,7 @@ using System.Buffers;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.InteropServices;
 
@@ -41,7 +42,6 @@ public class RTree<T>
   where T : notnull
 {
   private readonly Stack<int> _queryStack;
-  private readonly Dictionary<T, int> _itemToNodeIndex;
 
   private readonly Func<T, RTreeBoundary> _boundarySelector;
 
@@ -51,6 +51,7 @@ public class RTree<T>
   private readonly SynchronizedObservableOrderedSet<T> _viewportItems;
   private readonly HashSet<T> _viewportUpdateCache;
 
+  private Dictionary<T, int> _itemToNodeIndex;
   private int _nodeCount;
 
   private int _childReferencesCount;
@@ -75,13 +76,13 @@ public class RTree<T>
   public RTree(Span<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
     : this(items.Length, options ?? new RTreeOptions(), boundarySelector)
   {
-    BulkInitialize(items);
+    BulkInitialize(items, items.Length);
   }
 
   public RTree(int capacity, Span<T> items, Func<T, RTreeBoundary> boundarySelector, RTreeOptions? options = null)
     : this(Math.Max(capacity, items.Length), options ?? new RTreeOptions(), boundarySelector)
   {
-    BulkInitialize(items);
+    BulkInitialize(items, items.Length);
   }
 
   private RTree(int capacity, RTreeOptions options, Func<T, RTreeBoundary> boundarySelector)
@@ -100,20 +101,14 @@ public class RTree<T>
     // would cause massive overlaps of RTreeNodes.
     _leafNodeVirtualFullness = (MaxEntriesPerNode - MinEntriesPerNode) / (double)MaxEntriesPerNode;
 
-    _itemToNodeIndex = new Dictionary<T, int>(capacity);
+    // Capacities for the following ensured in EnsureCapacity.
+    _itemToNodeIndex = new Dictionary<T, int>();
     _queryStack = new Stack<int>(options.InitialQueryStackCapacity);
     _viewportItems = new SynchronizedObservableOrderedSet<T>(options.InitialViewportItemsCapacity);
     _viewportUpdateCache = new HashSet<T>(options.InitialViewportItemsCapacity);
 
-    if (capacity == 0)
-    {
-      // We need 1 node to be allocated anyway to store the root node, so use fit some anyway.
-      capacity = 16;
-    }
-
-    var (nodeCount, childBlockCount) = EstimateCapacities(capacity, options);
-    Nodes = new RTreeNode<T>[nodeCount];
-    ChildReferences = new RTreeNodeReference[childBlockCount * MaxEntriesPerNode];
+    EnsureCapacity(capacity);
+    Debug.Assert(Nodes.Length > 0, "Must be bigger 0, even at capacity 0 to account for the root.");
 
     RootIndex = RTreeNode<T>.AllocateNonLeaf(this).OwnIndex;
   }
@@ -170,6 +165,40 @@ public class RTree<T>
 
   public IReadOnlyCollection<T> ViewportItems => _viewportItems;
 
+  [MemberNotNull(
+    nameof(Nodes),
+    nameof(ChildReferences))]
+  public void EnsureCapacity(int capacity)
+  {
+    ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 0);
+
+    var (estimatedNodeCount, estimatedChildBlockCount) = EstimateCapacities(capacity, MaxEntriesPerNode);
+    if (Nodes == null!)
+    {
+      Nodes = new RTreeNode<T>[estimatedNodeCount];
+    }
+    else if (estimatedNodeCount > Nodes.Length)
+    {
+      Array.Resize(ref Nodes, estimatedNodeCount);
+    }
+
+    if (ChildReferences == null!)
+    {
+      ChildReferences = new RTreeNodeReference[estimatedChildBlockCount * MaxEntriesPerNode];
+    }
+    else if (estimatedChildBlockCount > ChildReferences.Length / MaxEntriesPerNode)
+    {
+      Array.Resize(ref ChildReferences, estimatedChildBlockCount * MaxEntriesPerNode);
+    }
+
+    _itemToNodeIndex.EnsureCapacity(capacity);
+
+    if (!_actualViewport.IsEmpty)
+    {
+      _viewportItems.EnsureCapacity(capacity);
+    }
+  }
+
   public bool Add(T item)
   {
     if (item == null!)
@@ -206,7 +235,7 @@ public class RTree<T>
 
     if (Count == 0 && items.Length > MaxEntriesPerNode)
     {
-      var result = BulkInitialize(items);
+      var result = BulkInitialize(items, items.Length);
 
       if (!_actualViewport.IsEmpty
           && _actualViewport.IntersectsUnchecked(in Nodes[RootIndex].Boundary))
@@ -813,25 +842,11 @@ public class RTree<T>
     }
   }
 
-  private int BulkInitialize(Span<T> items)
+  private int BulkInitialize(Span<T> items, int capacity)
   {
     if (items.Length == 0)
     {
       return 0;
-    }
-
-    // Pre-size arenas to avoid repeated resizing during bulk load.
-    // Estimate: N leaf nodes + ~N/maxEntries non-leaf nodes (geometric series ~= N/(maxEntries-1)).
-    var estimatedNonLeafNodes = items.Length / Math.Max(MaxEntriesPerNode - 1, 1) + 1;
-    var estimatedTotalNodes = items.Length + estimatedNonLeafNodes + 1;
-    if (estimatedTotalNodes > Nodes.Length)
-    {
-      Array.Resize(ref Nodes, estimatedTotalNodes);
-    }
-
-    if (estimatedNonLeafNodes > ChildReferences.Length / MaxEntriesPerNode)
-    {
-      Array.Resize(ref ChildReferences, estimatedNonLeafNodes * MaxEntriesPerNode);
     }
 
     var indices = ArrayPool<int>.Shared.Rent(items.Length);
@@ -864,7 +879,7 @@ public class RTree<T>
       RootIndex = root.OwnIndex;
 
       var length = items.Length - skipped;
-      BuildSortTileRecursiveTree(RootIndex, indices.AsSpan(0, length));
+      BuildSortTileRecursiveTree(RootIndex, indices.AsSpan(0, length), capacity);
 
       return length;
     }
@@ -874,10 +889,12 @@ public class RTree<T>
     }
   }
 
-  internal void BuildSortTileRecursiveTree(int rootIndex, Span<int> nodeIndices)
+  internal void BuildSortTileRecursiveTree(int rootIndex, Span<int> nodeIndices, int capacity)
   {
     Debug.Assert(!Nodes[rootIndex].IsLeaf, "Must not be called on leaf nodes.");
     Debug.Assert(Nodes[rootIndex].ChildrenCount == 0, "The passed root must be empty.");
+
+    EnsureCapacity(Math.Max(nodeIndices.Length, capacity));
 
     while (true)
     {
@@ -1109,7 +1126,7 @@ public class RTree<T>
     _freeChildBlockHead = blockIndex;
   }
 
-  private static (int Nodes, int ChildBlocks) EstimateCapacities(int leafCapacity, RTreeOptions options)
+  private static (int Nodes, int ChildBlocks) EstimateCapacities(int leafCapacity, int maxEntriesPerNode)
   {
     // Overshoot the specified target by about 25%, as the calculation below assumes a perfect distribution.
     const int overshoot = 25;
@@ -1134,7 +1151,8 @@ public class RTree<T>
       leafCapacity = leafCapacity * (100 + overshoot) / 100;
     }
 
-    var estimatedChildBlockCount = leafCapacity / Math.Max(options.MaxEntriesPerNode - 1, 1) + 1;
-    return (leafCapacity + estimatedChildBlockCount, estimatedChildBlockCount);
+    var estimatedChildBlockCount = leafCapacity / Math.Max(maxEntriesPerNode - 1, 1) + 1;
+    var estimatedNodeCount = Math.Max(1, leafCapacity + estimatedChildBlockCount); // 1: always required for root.
+    return (estimatedNodeCount, estimatedChildBlockCount);
   }
 }

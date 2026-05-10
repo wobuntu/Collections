@@ -196,7 +196,7 @@ internal struct RTreeNode<T>
     branchRoot.Boundary = new RTreeBoundary();
 
     var branchRootIndex = branchRoot.OwnIndex;
-    owner.BuildSortTileRecursiveTree(branchRootIndex, indicesSpan);
+    owner.BuildSortTileRecursiveTree(branchRootIndex, indicesSpan, 0);
 
     // Reallocation may have occurred, which could cause references to be outdated.
     // Hence, refetch branchRoot.
