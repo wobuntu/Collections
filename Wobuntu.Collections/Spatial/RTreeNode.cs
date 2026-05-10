@@ -16,6 +16,13 @@ internal struct RTreeNode<T>
   where T : notnull
 {
   internal const int NullIndex = -1;
+  
+  // ReSharper disable once CommentTypo
+  // We use stackalloc for int / float arrays, hence the division by 4. The stack buffer should usually
+  // be 1MB on windows (https://learn.microsoft.com/en-us/windows/win32/procthread/thread-stack-size),
+  // 8MB on linux ("ulimit -s"), less on WASM. Seems like dotnet uses similar sizes in the BCL, hence
+  // trying to be conservative here and assuming 512 bytes to be OK.
+  private const int StackAllocLimit = 512 / 4;
 
   internal int ParentIndex;
   internal int OwnIndex;
@@ -180,23 +187,37 @@ internal struct RTreeNode<T>
     UpdateBoundary(owner);
   }
 
-  internal static void RebalanceBranch(RTree<T> owner, ref RTreeNode<T> branchRoot)
+  internal static unsafe void RebalanceBranch(RTree<T> owner, ref RTreeNode<T> branchRoot)
   {
     Debug.Assert(!branchRoot.IsLeaf, "Must not be called on leaf nodes.");
 
-    var nodeIndices = ArrayPool<int>.Shared.Rent(branchRoot.ChildrenCount);
+    int[]? rented = null;
+    Span<int> nodeIndices;
+
+    if (branchRoot.ChildrenCount > StackAllocLimit)
+    {
+      rented = ArrayPool<int>.Shared.Rent(branchRoot.ChildrenCount);
+      nodeIndices = rented.AsSpan(0, branchRoot.ChildrenCount);
+    }
+    else
+    {
+#pragma warning disable CS9081
+      // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
+      // The stack allocated span is used for sorting only (Stack only grows, stack frame is not dropped, nothing persisted).
+      nodeIndices = stackalloc int[branchRoot.ChildrenCount];
+#pragma warning restore CS9081
+    }
 
     for (var index = 0; index < branchRoot.ChildrenCount; index++)
     {
       nodeIndices[index] = owner.ChildReferences[branchRoot.FirstChildReferenceIndex + index].NodeIndex;
     }
 
-    var indicesSpan = nodeIndices.AsSpan(0, branchRoot.ChildrenCount);
     branchRoot.ChildrenCount = 0; // Reset before freeing to avoid double-detach
     branchRoot.Boundary = new RTreeBoundary();
 
     var branchRootIndex = branchRoot.OwnIndex;
-    owner.BuildSortTileRecursiveTree(branchRootIndex, indicesSpan, 0);
+    owner.BuildSortTileRecursiveTree(branchRootIndex, nodeIndices, 0);
 
     // Reallocation may have occurred, which could cause references to be outdated.
     // Hence, refetch branchRoot.
@@ -204,7 +225,11 @@ internal struct RTreeNode<T>
 
     // Sync parent slot boundary after rebuild
     branchRoot.SyncBoundaryInParentSlot(owner);
-    ArrayPool<int>.Shared.Return(nodeIndices, true);
+
+    if (rented != null)
+    {
+      ArrayPool<int>.Shared.Return(rented, true);
+    }
   }
 
   internal static ref RTreeNode<T> InsertParentLayer(RTree<T> owner, ref RTreeNode<T> forNode)
