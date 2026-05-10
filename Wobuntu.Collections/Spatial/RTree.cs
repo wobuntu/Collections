@@ -759,7 +759,6 @@ public class RTree<T>
     {
       var childIndex = ChildReferences[childReferenceOffset + index].NodeIndex;
       ref var child = ref Nodes[childIndex];
-      child.ParentIndex = RTreeNode<T>.NullIndex;
 
       if (parent.HasRemainingCapacity(MaxEntriesPerNode))
       {
@@ -819,7 +818,6 @@ public class RTree<T>
         for (var index = 0; index < childCount; index++)
         {
           var childIndex = ChildReferences[childReferenceOffset + index].NodeIndex;
-          Nodes[childIndex].ParentIndex = RTreeNode<T>.NullIndex;
           ref var child = ref Nodes[childIndex];
 
           if (Nodes[parentIndex].HasRemainingCapacity(MaxEntriesPerNode))
@@ -1070,7 +1068,6 @@ public class RTree<T>
     {
       var childIndex = childIndices[index];
       ref var child = ref Nodes[childIndex];
-      child.ParentIndex = RTreeNode<T>.NullIndex; // Detach before re-add // TODO: Can be done in AddChildDirect?
 
       parent.AddChildDirect(this, ref child);
     }
