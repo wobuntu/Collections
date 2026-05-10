@@ -842,14 +842,29 @@ public class RTree<T>
     }
   }
 
-  private int BulkInitialize(Span<T> items, int capacity)
+  private unsafe int BulkInitialize(Span<T> items, int capacity)
   {
     if (items.Length == 0)
     {
       return 0;
     }
 
-    var indices = ArrayPool<int>.Shared.Rent(items.Length);
+    int[]? rented = null;
+    Span<int> indices;
+
+    if (items.Length > StackAllocLimit)
+    {
+      rented = ArrayPool<int>.Shared.Rent(items.Length);
+      indices = rented.AsSpan(0, items.Length);
+    }
+    else
+    {
+#pragma warning disable CS9081
+      // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
+      // The stack allocated span is used for sorting only (Stack only grows on calling sort, stack frame is not dropped).
+      indices = stackalloc int[items.Length];
+#pragma warning restore CS9081
+    }
 
     try
     {
@@ -879,13 +894,16 @@ public class RTree<T>
       RootIndex = root.OwnIndex;
 
       var length = items.Length - skipped;
-      BuildSortTileRecursiveTree(RootIndex, indices.AsSpan(0, length), capacity);
+      BuildSortTileRecursiveTree(RootIndex, indices[..length], capacity);
 
       return length;
     }
     finally
     {
-      ArrayPool<int>.Shared.Return(indices, true);
+      if (rented != null)
+      {
+        ArrayPool<int>.Shared.Return(rented, true);
+      }
     }
   }
 
