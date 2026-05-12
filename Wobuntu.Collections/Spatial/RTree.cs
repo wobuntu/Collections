@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Runtime.InteropServices;
 
 // Disabling some resharper suggestions as they are hurting performance in hot paths of this file:
 // ReSharper disable ForeachCanBePartlyConvertedToQueryUsingAnotherGetEnumerator
@@ -866,7 +865,7 @@ public class RTree<T>
     {
 #pragma warning disable CS9081
       // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
-      // The stack allocated span is used for sorting only (Stack only grows, stack frame is not dropped, nothing persisted).
+      // The stack allocated span is used for sorting only (Stack only grows, stack frame is not dropped).
       indices = stackalloc int[items.Length];
 #pragma warning restore CS9081
     }
@@ -912,12 +911,55 @@ public class RTree<T>
     }
   }
 
-  internal void BuildSortTileRecursiveTree(int rootIndex, Span<int> nodeIndices, int capacity)
+  internal unsafe void BuildSortTileRecursiveTree(int rootIndex, Span<int> nodeIndices, int capacity)
   {
     Debug.Assert(!Nodes[rootIndex].IsLeaf, "Must not be called on leaf nodes.");
     Debug.Assert(Nodes[rootIndex].ChildrenCount == 0, "The passed root must be empty.");
 
     EnsureCapacity(Math.Max(nodeIndices.Length, capacity));
+
+    // When we are building the tree, we will build it bottom up. This means we are creating parent nodes
+    // for slices of the leaf-nodes, store their indices, and consume them during the next iteration to
+    // create a further set of parent nodes for them, and so on.
+    // This means two things:
+    // - We need the create and collect nodes during one iteration, but consume them in the next iteration.
+    // - The amount of nodes to consider will shrink with each iteration.
+    // To efficiently store and handle this, we can allocate an array being big enough, to fit the nodes
+    // of two iterations, then toggle the start offset during each round to use the lower/upper part.
+    // The calculation here is the same as in the loop below.
+    double leafCount = nodeIndices.Length + 1;
+
+    var minParents = (int)Math.Ceiling(leafCount / MaxEntriesPerNode);
+    var leafSlices = (int)Math.Ceiling(Math.Sqrt(minParents));
+    var maxLeafsPerSlice = (int)Math.Ceiling(leafCount / leafSlices);
+    var maxParentsPerLeafSlice = (int)Math.Ceiling((double)maxLeafsPerSlice / MaxEntriesPerNode);
+    var maxLeafParents = leafSlices * maxParentsPerLeafSlice;
+
+    var minGrandParents = (int)Math.Ceiling((double)maxLeafParents / MaxEntriesPerNode);
+    var parentSlices = (int)Math.Ceiling(Math.Sqrt(minGrandParents));
+    var maxParentsPerSlice = (int)Math.Ceiling((double)maxLeafParents / parentSlices);
+    var maxGrandParentsPerParentSlice = (int)Math.Ceiling((double)maxParentsPerSlice / MaxEntriesPerNode);
+    var maxLeafGrandparents = parentSlices * maxGrandParentsPerParentSlice;
+
+    var bufferSize = maxLeafParents + maxLeafGrandparents;
+
+    int[]? rented = null;
+    Span<int> buffer;
+
+    if (bufferSize > StackAllocLimit)
+    {
+      rented = ArrayPool<int>.Shared.Rent(bufferSize);
+      buffer = rented.AsSpan(0, bufferSize);
+    }
+    else
+    {
+#pragma warning disable CS9081
+      // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
+      buffer = stackalloc int[bufferSize];
+#pragma warning restore CS9081
+    }
+
+    var offsetFlag = 1;
 
     while (true)
     {
@@ -926,7 +968,7 @@ public class RTree<T>
       {
         ref var root = ref Nodes[rootIndex];
         root.AddChildrenDirect(this, nodeIndices);
-        return;
+        break;
       }
 
       // An attempt of explaining what is going on below with an example:
@@ -959,7 +1001,10 @@ public class RTree<T>
       var sliceSize = (int)Math.Ceiling(nodesLength / sliceCount);
 
       SortIndicesByCenter(nodeIndices, true);
-      var parentIndices = new List<int>(parentNodeCount);
+
+      var offsetMask = offsetFlag - 1;
+      var offset = offsetMask & maxLeafParents; // Address 0 or second part of the buffer.
+      var bufferIndex = offset;
 
       for (var nodeIndex = 0; nodeIndex < nodeIndices.Length; nodeIndex += sliceSize)
       {
@@ -972,11 +1017,17 @@ public class RTree<T>
           ref var sliceParent = ref RTreeNode<T>.AllocateNonLeaf(this);
 
           sliceParent.AddChildrenDirect(this, sliceNodes);
-          parentIndices.Add(sliceParent.OwnIndex);
+          buffer[bufferIndex++] = sliceParent.OwnIndex;
         }
       }
 
-      nodeIndices = CollectionsMarshal.AsSpan(parentIndices);
+      nodeIndices = buffer.Slice(offset, bufferIndex - offset);
+      offsetFlag ^= 1;
+    }
+
+    if (rented != null)
+    {
+      ArrayPool<int>.Shared.Return(rented, true);
     }
   }
 
@@ -995,7 +1046,7 @@ public class RTree<T>
     {
 #pragma warning disable CS9081
       // Disable "A result of a stackalloc expression of this type in this context may be exposed outside the containing method"
-      // The stack allocated span is used for sorting only (Stack only grows, stack frame is not dropped, nothing persisted).
+      // The stack allocated span is used for sorting only (Stack only grows, stack frame is not dropped).
       keys = stackalloc float[indices.Length];
 #pragma warning restore CS9081
     }
