@@ -21,7 +21,6 @@ public class MixedBenchmarks
   private BenchmarkDataset _initialDataset = null!;
   private BenchmarkDataset _incomingDataset = null!;
   private RTree<DataPoint> _ourTree = null!;
-  private RTree<DataPoint> _ourOptimizedTree = null!;
   private RBush<RBushItem> _rBushTree = null!;
 
   [GlobalSetup]
@@ -40,17 +39,6 @@ public class MixedBenchmarks
       static item => new RTreeBoundary(item.X, item.Y, 1.0f, 1.0f),
       new RTreeOptions { MaxEntriesPerNode = 12 });
 
-    var estimatedNonLeafNodes = N / 11 + 1;
-    _ourOptimizedTree = new RTree<DataPoint>(
-      _initialDataset.OurData.AsSpan(),
-      static item => new RTreeBoundary(item.X, item.Y, 1.0f, 1.0f),
-      new RTreeOptions
-      {
-        MaxEntriesPerNode = 12,
-        InitialNodeCapacity = N + estimatedNonLeafNodes + 1,
-        InitialChildBlockCapacity = estimatedNonLeafNodes + 1,
-      });
-
     _rBushTree = new RBush<RBushItem>(maxEntries: 12);
     _rBushTree.BulkLoad(_initialDataset.RBushData);
   }
@@ -68,23 +56,6 @@ public class MixedBenchmarks
       else
       {
         _ourTree.Add(_incomingDataset.OurData[index]);
-      }
-    }
-  }
-
-  [Benchmark]
-  public void Wobuntu_Mixed_Optimized()
-  {
-    var random = new Random(123);
-    for (var index = 0; index < N / 2; index++)
-    {
-      if (random.Next(0, 2) == 0)
-      {
-        _ourOptimizedTree.Remove(_initialDataset.OurData[index]);
-      }
-      else
-      {
-        _ourOptimizedTree.Add(_incomingDataset.OurData[index]);
       }
     }
   }

@@ -21,7 +21,6 @@ public class SequentialAddBenchmarks
 
   private BenchmarkDataset _dataset = null!;
   private RTree<DataPoint> _ourTree = null!;
-  private RTree<DataPoint> _ourOptimizedTree = null!;
   private RBush<RBushItem> _rbushTree = null!;
   private QuadTreeRectF<QuadTreeItem> _quadTree = null!;
 
@@ -32,18 +31,9 @@ public class SequentialAddBenchmarks
   public void IterationSetup()
   {
     _ourTree = new RTree<DataPoint>(
+      N,
       static p => new RTreeBoundary(p.X, p.Y, 1.0f, 1.0f),
       new RTreeOptions { MaxEntriesPerNode = 12 });
-
-    var estimatedNonLeafNodes = N / 11 + 1;
-    _ourOptimizedTree = new RTree<DataPoint>(
-      static p => new RTreeBoundary(p.X, p.Y, 1.0f, 1.0f),
-      new RTreeOptions
-      {
-        MaxEntriesPerNode = 12,
-        InitialNodeCapacity = N + estimatedNonLeafNodes + 1,
-        InitialChildBlockCapacity = estimatedNonLeafNodes + 1,
-      });
 
     _rbushTree = new RBush<RBushItem>(maxEntries: 12);
     _quadTree = new QuadTreeRectF<QuadTreeItem>(new RectangleF(0, 0, 10_001, 10_001));
@@ -55,15 +45,6 @@ public class SequentialAddBenchmarks
     for (var index = 0; index < N; index++)
     {
       _ourTree.Add(_dataset.OurData[index]);
-    }
-  }
-
-  [Benchmark]
-  public void Wobuntu_SequentialAdd_Optimized()
-  {
-    for (var index = 0; index < N; index++)
-    {
-      _ourOptimizedTree.Add(_dataset.OurData[index]);
     }
   }
 
