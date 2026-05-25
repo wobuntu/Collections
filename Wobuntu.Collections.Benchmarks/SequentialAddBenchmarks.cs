@@ -9,8 +9,8 @@ namespace Wobuntu.Collections.Benchmarks;
 
 /// <summary>
 ///   Measures how fast each library can insert N items one at a time into an initially empty tree.
-///   NTS is excluded — STRtree only appends to a list during Insert and defers tree construction
-///   to the first query, making sequential insert timings not comparable.
+///   NTS STRtree and HPRtree are excluded — both only append to a list during Insert and defer tree
+///   construction to the first query, making sequential insert timings not comparable.
 /// </summary>
 [SimpleJob]
 [MemoryDiagnoser]

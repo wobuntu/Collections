@@ -9,7 +9,7 @@ namespace Wobuntu.Collections.Benchmarks;
 
 /// <summary>
 ///   Measures removal of all N items from a pre-built tree.
-///   Note: QuadTrees is excluded — it does not support individual item removal.
+///   Note: QuadTrees and NTS HPRtree are excluded — neither supports individual item removal.
 /// </summary>
 [SimpleJob]
 [MemoryDiagnoser]

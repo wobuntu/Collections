@@ -3,6 +3,7 @@ using BenchmarkDotNet.Attributes;
 using Wobuntu.Collections.Benchmarks.BenchmarkData;
 using Wobuntu.Collections.Observable;
 using Wobuntu.Collections.Spatial;
+using NetTopologySuite.Index.HPRtree;
 using NetTopologySuite.Index.Strtree;
 using QuadTrees;
 using RBush;
@@ -48,6 +49,7 @@ public class ViewportBenchmarks
 
   private RBush<RBushItem> _rBushTree = null!;
   private STRtree<NtsItem> _ntsTree = null!;
+  private HPRtree<NtsItem> _hpRtreeTree = null!;
   private QuadTreeRectF<QuadTreeItem> _quadTree = null!;
 
   // Observable sets maintained by competitor libraries via per-frame diffing (IntersectWith + UnionWith).
@@ -58,6 +60,8 @@ public class ViewportBenchmarks
   private SynchronizedObservableOrderedSet<QuadTreeItem> _quadPanViewportItems = null!;
   private SynchronizedObservableOrderedSet<RBushItem> _rBushZoomViewportItems = null!;
   private SynchronizedObservableOrderedSet<NtsItem> _ntsZoomViewportItems = null!;
+  private SynchronizedObservableOrderedSet<NtsItem> _hpRtreePanViewportItems = null!;
+  private SynchronizedObservableOrderedSet<NtsItem> _hpRtreeZoomViewportItems = null!;
   private SynchronizedObservableOrderedSet<QuadTreeItem> _quadZoomViewportItems = null!;
   private SynchronizedObservableOrderedSet<RBushItem> _rBushMutationsViewportItems = null!;
 
@@ -157,6 +161,13 @@ public class ViewportBenchmarks
       _ntsTree.Insert(item.Envelope, item);
     }
 
+    _hpRtreeTree = new HPRtree<NtsItem>(12);
+    for (var index = 0; index < N; index++)
+    {
+      var item = _initialDataset.NtsData[index];
+      _hpRtreeTree.Insert(item.Envelope, item);
+    }
+
     _quadTree = new QuadTreeRectF<QuadTreeItem>(new RectangleF(0, 0, 10_001, 10_001));
     _quadTree.AddRange(_initialDataset.QuadTreeData);
 
@@ -188,6 +199,15 @@ public class ViewportBenchmarks
     var ntsZoomInitial = _ntsTree.Query(_ntsZoomEnvelopes[0]);
     _ntsZoomViewportItems = new SynchronizedObservableOrderedSet<NtsItem>(ntsZoomInitial.Count);
     _ntsZoomViewportItems.AddRange(ntsZoomInitial);
+
+    // Pre-seed HPRtree sets (first query also triggers the deferred build).
+    var hpRtreePanInitial = _hpRtreeTree.Query(_ntsPanEnvelopes[0]);
+    _hpRtreePanViewportItems = new SynchronizedObservableOrderedSet<NtsItem>(hpRtreePanInitial.Count);
+    _hpRtreePanViewportItems.AddRange(hpRtreePanInitial);
+
+    var hpRtreeZoomInitial = _hpRtreeTree.Query(_ntsZoomEnvelopes[0]);
+    _hpRtreeZoomViewportItems = new SynchronizedObservableOrderedSet<NtsItem>(hpRtreeZoomInitial.Count);
+    _hpRtreeZoomViewportItems.AddRange(hpRtreeZoomInitial);
 
     var quadZoomInitial = _quadTree.GetObjects(_quadZoomRects[0]);
     _quadZoomViewportItems = new SynchronizedObservableOrderedSet<QuadTreeItem>(quadZoomInitial.Count);
@@ -239,6 +259,19 @@ public class ViewportBenchmarks
       var newItems = _ntsTree.Query(_ntsPanEnvelopes[index]);
       SyncViewportSet(_ntsPanViewportItems, newItems);
       total += _ntsPanViewportItems.Count;
+    }
+    return total;
+  }
+
+  [Benchmark]
+  public int HPRtree_Panning()
+  {
+    var total = 0;
+    for (var index = 1; index < FrameCount; index++)
+    {
+      var newItems = _hpRtreeTree.Query(_ntsPanEnvelopes[index]);
+      SyncViewportSet(_hpRtreePanViewportItems, newItems);
+      total += _hpRtreePanViewportItems.Count;
     }
     return total;
   }
@@ -309,6 +342,19 @@ public class ViewportBenchmarks
       var newItems = _ntsTree.Query(_ntsZoomEnvelopes[index]);
       SyncViewportSet(_ntsZoomViewportItems, newItems);
       total += _ntsZoomViewportItems.Count;
+    }
+    return total;
+  }
+
+  [Benchmark]
+  public int HPRtree_ZoomIn()
+  {
+    var total = 0;
+    for (var index = 1; index < FrameCount; index++)
+    {
+      var newItems = _hpRtreeTree.Query(_ntsZoomEnvelopes[index]);
+      SyncViewportSet(_hpRtreeZoomViewportItems, newItems);
+      total += _hpRtreeZoomViewportItems.Count;
     }
     return total;
   }
