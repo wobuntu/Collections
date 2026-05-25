@@ -2,6 +2,7 @@ using System.Drawing;
 using BenchmarkDotNet.Attributes;
 using Wobuntu.Collections.Benchmarks.BenchmarkData;
 using Wobuntu.Collections.Spatial;
+using NetTopologySuite.Index.HPRtree;
 using NetTopologySuite.Index.Strtree;
 using QuadTrees;
 using RBush;
@@ -13,7 +14,7 @@ namespace Wobuntu.Collections.Benchmarks;
 ///   Measures how fast each library can construct a tree from N items at once.<br />
 ///   Our implementation uses the STR (Sort-Tile-Recursive) algorithm via the Span constructor.<br />
 ///   RBush uses the OMT (Overlap Minimizing Top-down) bulk-load algorithm.<br />
-///   NetTopologySuite STRtree builds on first query after all inserts.<br />
+///   NetTopologySuite STRtree and HPRtree both build on first query after all inserts.<br />
 ///   QuadTrees uses AddRange.
 /// </summary>
 [SimpleJob]
@@ -53,6 +54,21 @@ public class BulkInsertBenchmarks
     }
 
     // STRtree builds on first query; force the build.
+    tree.Query(new NtsEnvelope(0, 0, 0, 0));
+    return tree;
+  }
+
+  [Benchmark]
+  public HPRtree<NtsItem> HPRtree_BulkInsert()
+  {
+    var tree = new HPRtree<NtsItem>(12);
+    for (var index = 0; index < N; index++)
+    {
+      var item = _dataset.NtsData[index];
+      tree.Insert(item.Envelope, item);
+    }
+
+    // HPRtree builds on first query; force the build.
     tree.Query(new NtsEnvelope(0, 0, 0, 0));
     return tree;
   }
