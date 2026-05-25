@@ -2,6 +2,7 @@ using System.Drawing;
 using BenchmarkDotNet.Attributes;
 using Wobuntu.Collections.Benchmarks.BenchmarkData;
 using Wobuntu.Collections.Spatial;
+using NetTopologySuite.Index.HPRtree;
 using NetTopologySuite.Index.Strtree;
 using QuadTrees;
 using RBush;
@@ -26,6 +27,7 @@ public class QueryBenchmarks
   private RTree<DataPoint> _ourTree = null!;
   private RBush<RBushItem> _rbushTree = null!;
   private STRtree<NtsItem> _ntsTree = null!;
+  private HPRtree<NtsItem> _hpRtreeTree = null!;
   private QuadTreeRectF<QuadTreeItem> _quadTree = null!;
 
   private RTreeBoundary[] _ourQueryBoundaries = [];
@@ -58,6 +60,14 @@ public class QueryBenchmarks
     }
     // NTS does not build the tree until the first query, so we force it here.
     _ntsTree.Query(new NtsEnvelope(0, 0, 0, 0));
+
+    _hpRtreeTree = new HPRtree<NtsItem>(12);
+    for (var index = 0; index < N; index++)
+    {
+      var item = dataset.NtsData[index];
+      _hpRtreeTree.Insert(item.Envelope, item);
+    }
+    _hpRtreeTree.Query(new NtsEnvelope(0, 0, 0, 0));
 
     _quadTree = new QuadTreeRectF<QuadTreeItem>(new RectangleF(0, 0, 10_001, 10_001));
     _quadTree.AddRange(dataset.QuadTreeData);
@@ -113,6 +123,18 @@ public class QueryBenchmarks
     for (var index = 0; index < QueryCount; index++)
     {
       total += _ntsTree.Query(_ntsQueryEnvelopes[index]).Count;
+    }
+
+    return total;
+  }
+
+  [Benchmark]
+  public int HPRtree_Query()
+  {
+    var total = 0;
+    for (var index = 0; index < QueryCount; index++)
+    {
+      total += _hpRtreeTree.Query(_ntsQueryEnvelopes[index]).Count;
     }
 
     return total;

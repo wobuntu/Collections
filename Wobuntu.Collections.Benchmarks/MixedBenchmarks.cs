@@ -8,8 +8,8 @@ namespace Wobuntu.Collections.Benchmarks;
 /// <summary>
 ///   Simulates a viewport update cycle: a tree is pre-built with N items, then N/2 items
 ///   are pseudo-randomly removed or inserted.<br />
-///   Note: NTS and QuadTrees are excluded — NTS is semi-static (no inserts after build),
-///   QuadTrees does not support removal.
+///   Note: NTS STRtree, HPRtree, and QuadTrees are excluded — NTS trees are semi-static
+///   (no inserts after build), QuadTrees does not support removal.
 /// </summary>
 [SimpleJob]
 [MemoryDiagnoser]
